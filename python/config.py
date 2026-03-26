@@ -18,7 +18,7 @@ GCS_BUCKET_LOCATION = os.getenv("GCS_BUCKET_LOCATION", "us-central1")
 GCS_EAGLEI_CSV_PATH = os.getenv("GCS_EAGLEI_CSV_PATH", "")
 LOCAL_EAGLEI_CSV_PATH = os.getenv("LOCAL_EAGLEI_CSV_PATH", "")
 
-# Risk scoring thresholds (optional — SQL files have sensible defaults)
+# Risk scoring thresholds (SQL files have sensible defaults)
 WIND_THRESHOLD_LOW = os.getenv("WIND_THRESHOLD_LOW")
 WIND_THRESHOLD_HIGH = os.getenv("WIND_THRESHOLD_HIGH")
 PRECIP_THRESHOLD_LOW = os.getenv("PRECIP_THRESHOLD_LOW")
@@ -26,7 +26,7 @@ PRECIP_THRESHOLD_HIGH = os.getenv("PRECIP_THRESHOLD_HIGH")
 WIND_WEIGHT = os.getenv("WIND_WEIGHT")
 PRECIP_WEIGHT = os.getenv("PRECIP_WEIGHT")
 
-# ML threshold (optional — used by step 10)
+# ML threshold (used by ml steps)
 OUTAGE_THRESHOLD = os.getenv("OUTAGE_THRESHOLD")
 
 def validate_config(is_setup=False):

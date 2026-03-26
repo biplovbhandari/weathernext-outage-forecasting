@@ -1,13 +1,13 @@
 -- ============================================================================
 -- Join outage data with weather forecasts (Parameterized)
 -- ============================================================================
+-- No WHERE clause needed: the upstream graph_wind_precip_hourly TABLE
+-- is already filtered to the configured counties and date range.
+-- The JOIN naturally limits results to matching rows.
 
 DECLARE gcp_project     STRING         DEFAULT 'YOUR_GCP_PROJECT';
 DECLARE dataset_name    STRING         DEFAULT 'weathernext_demo';
 DECLARE weather_table   STRING         DEFAULT 'graph_wind_precip_hourly';
-DECLARE county_fips     ARRAY<STRING>  DEFAULT ['01051', '01101'];
-DECLARE start_ts        TIMESTAMP      DEFAULT TIMESTAMP('2024-05-06 00:00:00');
-DECLARE end_ts          TIMESTAMP      DEFAULT TIMESTAMP('2024-05-15 23:59:59');
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE VIEW `%s.%s.view_outage_vs_weather` AS
@@ -22,14 +22,8 @@ EXECUTE IMMEDIATE FORMAT("""
   JOIN `%s.%s.%s` w
     ON o.county_fips = w.county_fips
     AND o.hour_ts = w.hour_ts
-  WHERE o.county_fips IN UNNEST(@county_fips)
-    AND o.hour_ts BETWEEN @start_ts AND @end_ts
 """,
   gcp_project, dataset_name,
   gcp_project, dataset_name,
   gcp_project, dataset_name, weather_table
-)
-USING
-  county_fips AS county_fips,
-  start_ts AS start_ts,
-  end_ts AS end_ts;
+);

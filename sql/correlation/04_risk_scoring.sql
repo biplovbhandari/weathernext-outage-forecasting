@@ -36,15 +36,21 @@ EXECUTE IMMEDIATE FORMAT("""
 
       -- Normalize wind: clamp to [0, 1]
       LEAST(1.0, GREATEST(0.0,
-        (ws10_max_mps_24_48 - @wind_low) / NULLIF(@wind_high - @wind_low, 0)
+        (ws10_max_mps_24_48 - %f) / NULLIF(%f - %f, 0)
       )) AS wind_norm,
 
       -- Normalize precip: clamp to [0, 1]
       LEAST(1.0, GREATEST(0.0,
-        (tp6_mm_mean_24_48 - @precip_low) / NULLIF(@precip_high - @precip_low, 0)
+        (tp6_mm_mean_24_48 - %f) / NULLIF(%f - %f, 0)
       )) AS precip_norm
 
     FROM `%s.%s.view_outage_vs_weather_maxlead`
+  ),
+  scored AS (
+    SELECT
+      *,
+      (%f * wind_norm + %f * precip_norm) AS risk_score
+    FROM base
   )
   SELECT
     county_fips,
@@ -53,23 +59,19 @@ EXECUTE IMMEDIATE FORMAT("""
     tp6_mm_mean_24_48,
     wind_norm,
     precip_norm,
-    (@w_wind * wind_norm + @w_precip * precip_norm) AS risk_score,
+    risk_score,
 
     CASE
-      WHEN (@w_wind * wind_norm + @w_precip * precip_norm) >= 0.7 THEN 'HIGH'
-      WHEN (@w_wind * wind_norm + @w_precip * precip_norm) >= 0.4 THEN 'MEDIUM'
+      WHEN risk_score >= 0.7 THEN 'HIGH'
+      WHEN risk_score >= 0.4 THEN 'MEDIUM'
       ELSE 'LOW'
     END AS risk_tier
 
-  FROM base
+  FROM scored
 """,
   gcp_project, dataset_name,
-  gcp_project, dataset_name
-)
-USING
-  wind_low AS wind_low,
-  wind_high AS wind_high,
-  precip_low AS precip_low,
-  precip_high AS precip_high,
-  w_wind AS w_wind,
-  w_precip AS w_precip;
+  wind_low, wind_high, wind_low,
+  precip_low, precip_high, precip_low,
+  gcp_project, dataset_name,
+  w_wind, w_precip
+);

@@ -41,7 +41,7 @@ graph TD
         I --> J["Risk Scoring<br/>HIGH / MEDIUM / LOW"]
     end
 
-    subgraph ML["ML Prediction (Optional)"]
+    subgraph ML["ML Prediction"]
         G --> M["BQML Training Data<br/>features + labels"]
         M --> N["Boosted Tree /<br/>AutoML Classifier"]
         N --> O["ML.PREDICT<br/>outage probability"]
@@ -74,7 +74,7 @@ graph TD
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/YOUR_USERNAME/weathernext-utility-forecasting.git
+git clone https://github.com/biplovbhandari/weathernext-utility-forecasting.git
 cd weathernext-utility-forecasting
 
 # 2. Install Python dependencies
@@ -93,7 +93,7 @@ python python/setup.py
 # 6. Run correlation analysis (weather extraction → risk scoring → preboard)
 python python/pipeline.py --phase correlation
 
-# 7. (Optional) Run ML pipeline (training → model → evaluation)
+# 7. Run ML pipeline (training → model → evaluation)
 python python/pipeline.py --phase ml
 ```
 
@@ -113,7 +113,10 @@ python python/pipeline.py --phase ml             # ML only
 python python/pipeline.py --phase all             # Both (correlation + ml)
 python python/pipeline.py --dry-run              # Print SQL without executing
 python python/pipeline.py --dry-run -v           # Print full parameterized SQL
+python python/pipeline.py --resume               # Resume after failure (skip completed steps)
 ```
+
+> **Note:** `--resume` is for failure recovery — it skips steps whose target already exists. Do NOT use it after changing `.env` config (counties, dates, leads), or stale data will be kept. See [docs/architecture.md](docs/architecture.md#understanding---resume) for details.
 
 ### What the pipeline produces
 

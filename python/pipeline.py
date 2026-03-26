@@ -11,6 +11,7 @@ Usage:
     python pipeline.py --phase correlation    # Correlation only (weather → risk)
     python pipeline.py --phase ml             # ML only (training → model → evaluate)
     python pipeline.py --dry-run              # Print SQL, don't execute
+    python pipeline.py --resume               # Skip steps whose target already exists
 """
 
 import argparse
@@ -50,8 +51,8 @@ def build_replacement_map():
         'max_lead':        config.MAX_LEAD_HOURS,
     }
 
-    # Optional risk scoring / ML thresholds — only override if set in .env
-    optional = {
+    # Risk scoring / ML thresholds — only override if set in .env
+    risk_scoring_ml_thresholds = {
         'wind_low':         config.WIND_THRESHOLD_LOW,
         'wind_high':        config.WIND_THRESHOLD_HIGH,
         'precip_low':       config.PRECIP_THRESHOLD_LOW,
@@ -60,7 +61,7 @@ def build_replacement_map():
         'w_precip':         config.PRECIP_WEIGHT,
         'outage_threshold': config.OUTAGE_THRESHOLD,
     }
-    for name, value in optional.items():
+    for name, value in risk_scoring_ml_thresholds.items():
         if value is not None:
             replacements[name] = value
 
@@ -93,11 +94,63 @@ def discover_sql_files(phase):
     return files
 
 
-def execute_step(client, phase, filename, sql, dry_run, verbose):
-    """Execute a single SQL step. Returns True on success."""
+def get_target_object(sql):
+    """Extract target table/view/model name from CREATE OR REPLACE statement.
+
+    SQL files use FORMAT(\"\"\"CREATE ... `%s.%s.name`\"\"\", project, dataset)
+    so we resolve %s placeholders from DECLARE variable defaults.
+    """
+    match = re.search(
+        r'CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW|MODEL)\s+`([^`]+)`',
+        sql, re.IGNORECASE
+    )
+    if not match:
+        return None
+
+    name = match.group(1)
+    if '%' not in name:
+        return name
+
+    # Extract DECLARE STRING variable values (already substituted by apply_variables)
+    declares = {}
+    for m in re.finditer(r"DECLARE\s+(\w+)\s+STRING\s+DEFAULT\s+'([^']+)'", sql):
+        declares[m.group(1)] = m.group(2)
+
+    # Resolve %s placeholders: first two are always gcp_project, dataset_name
+    resolved = name
+    if 'gcp_project' in declares:
+        resolved = resolved.replace('%s', declares['gcp_project'], 1)
+    if 'dataset_name' in declares:
+        resolved = resolved.replace('%s', declares['dataset_name'], 1)
+    # Third %s (if present) is the output table name variable
+    for var in ['output_table', 'weather_table']:
+        if '%s' in resolved and var in declares:
+            resolved = resolved.replace('%s', declares[var], 1)
+            break
+
+    return resolved if '%' not in resolved else None
+
+
+def object_exists(client, full_name):
+    """Check if a BigQuery table or view exists."""
+    try:
+        client.get_table(full_name)
+        return True
+    except Exception:
+        return False
+
+
+def execute_step(client, phase, filename, sql, dry_run, verbose, resume=False):
+    """Execute a single SQL step. Returns True on success, 'SKIP' if skipped."""
     print(f"\n{'='*60}")
     print(f"  [{phase}] {filename}")
     print(f"{'='*60}")
+
+    if resume and client:
+        target = get_target_object(sql)
+        if target and object_exists(client, target):
+            print(f"  SKIP (already exists: {target})")
+            return True
 
     if verbose or dry_run:
         print(sql)
@@ -159,6 +212,7 @@ def parse_args():
             "  python pipeline.py --phase ml             # ML only\n"
             "  python pipeline.py --dry-run              # Print SQL, don't execute\n"
             "  python pipeline.py --dry-run -v           # Print full SQL\n"
+            "  python pipeline.py --resume               # Skip completed steps\n"
         )
     )
     parser.add_argument('--dry-run', action='store_true',
@@ -168,6 +222,8 @@ def parse_args():
         help='Pipeline phase to run (default: all)')
     parser.add_argument('--verbose', '-v', action='store_true',
         help='Print full SQL before execution')
+    parser.add_argument('--resume', action='store_true',
+        help='Skip steps whose target table/view already exists in BigQuery')
     return parser.parse_args()
 
 
@@ -192,6 +248,8 @@ def main():
     print(f"  Phases:   {', '.join(phases)}")
     if args.dry_run:
         print(f"  Mode:     DRY RUN")
+    if args.resume:
+        print(f"  Mode:     RESUME (skip existing)")
 
     # Initialize BigQuery client (skip in dry-run)
     client = None
@@ -216,7 +274,8 @@ def main():
                 sql = apply_variables(f.read(), replacements)
 
             success = execute_step(client, phase, filename, sql,
-                                   args.dry_run, args.verbose)
+                                   args.dry_run, args.verbose,
+                                   resume=args.resume)
             results.append((phase, filename, success))
 
             if not success:
