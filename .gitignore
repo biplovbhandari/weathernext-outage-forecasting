@@ -1,0 +1,38 @@
+# Environment & secrets
+config/.env
+.env
+*.env
+
+# GCP credentials
+*.json
+!package.json
+service-account*.json
+credentials*.json
+key*.json
+
+# OS files
+.DS_Store
+Thumbs.db
+*~
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+*.pyc
+
+# Data files (too large for git)
+*.csv
+*.parquet
+*.avro
+
+venv/
+dev/
+docs/
+CONTRIBUTING.md
