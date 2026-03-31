@@ -1,6 +1,6 @@
 # WeatherNext Utility Forecasting
 
-**Predict power outages 24–48 hours in advance using Google DeepMind's WeatherNext AI weather forecasts.**
+**Predict power outages 24-48 hours in advance using Google DeepMind's WeatherNext AI weather forecasts.**
 
 This project correlates [WeatherNext](https://deepmind.google/discover/blog/graphcast-ai-model-for-faster-and-more-accurate-global-weather-forecasting/) AI weather forecasts with [EAGLE-I](https://eagle-i.doe.gov/) power outage data on Google Cloud BigQuery to help electric utilities pre-position repair crews ahead of severe weather events. EAGLE-I can be downloaded from [here](https://figshare.com/s/417a4f147cf1357a5391?file=53581661). We are using 2024 for this repo.
 
@@ -14,10 +14,10 @@ Electric utilities mobilize repair crews *after* storms cause outages, leading t
 
 WeatherNext (Google DeepMind's AI weather model) provides high-resolution, 10-day forecasts accessible directly in BigQuery. By joining these forecasts with historical outage data, we can:
 
-1. **Validate** that AI weather forecasts correlate with actual outage events
-2. **Train ML models** (BQML or Vertex AI AutoML) to predict outage probability from forecast features
-3. **Score risk** per county using model predictions or threshold-based rules
-4. **Pre-position crews** 24–48 hours before a storm hits, reducing restoration time
+1. **Extract** multi-ingredient weather features (wind, shear, hail proxy, precipitation) at multiple lead times
+2. **Detect** outage events and evaluate which forecasts detected them
+3. **Score risk** per county using data-driven thresholds (p90 wind, p80 updraft)
+4. **Pre-position crews** 24-48 hours before a storm hits, reducing restoration time
 
 ## Architecture
 
@@ -25,40 +25,47 @@ WeatherNext (Google DeepMind's AI weather model) provides high-resolution, 10-da
 graph TD
     subgraph Ingestion
         A["EAGLE-I CSV<br/>(DOE outages)"] -->|bq load| B["eaglei_part<br/>partitioned by date<br/>clustered by county"]
-        C["WeatherNext Graph<br/>(Analytics Hub → BQ)"] -->|"Wind (u10,v10)<br/>Precip (tp6)<br/>Temp (2m)"| D["Grid → County<br/>ST_INTERSECTS()<br/>MAX(wind), AVG(precip)"]
+        C["WeatherNext Graph<br/>(Analytics Hub)"] -->|"Wind, Shear, Precip<br/>Temp, Updraft"| D["Cluster + Partition<br/>pruned extraction"]
     end
 
     subgraph Processing
-        B --> E["view_eaglei_hourly<br/>15-min → hourly AVG"]
-        D --> F["graph_wind_precip_hourly<br/>per county-hour-lead"]
-        E -->|"JOIN on<br/>(county_fips, hour_ts)"| G["view_outage_vs_weather"]
-        F --> G
+        B --> E["view_eaglei_6h_qc<br/>6h blocks + QC"]
+        D --> F["graph_multi_ingredients_hourly<br/>per county-6h-lead"]
+        G["view_six_hour_grid<br/>county x time scaffold"] --> H
+        E --> H["view_outage_vs_wx_6h_qc<br/>master join"]
+        F --> H
     end
 
     subgraph Analysis
-        G --> H["Correlation<br/>& Validation"]
-        G --> I["view_collapsed_signal<br/>MAX across leads"]
-        I --> J["Risk Scoring<br/>HIGH / MEDIUM / LOW"]
+        H --> I["events_restoration<br/>gap-tolerant event detection"]
+        H --> J["view_windhail_thresholds<br/>p90/p80 per county"]
+        I --> K["event_coverage_wx<br/>detection flags per lead"]
+        J --> L["view_daily_plan<br/>HIGH / MEDIUM / LOW"]
+        H --> M["lead_performance<br/>precision, recall, F1"]
+        H --> N["correlations<br/>CORR per county-lead"]
     end
 
     subgraph ML["ML Prediction"]
-        G --> M["BQML Training Data<br/>features + labels"]
-        M --> N["Boosted Tree /<br/>AutoML Classifier"]
-        N --> O["ML.PREDICT<br/>outage probability"]
+        H --> O["BQML Training Data"]
+        O --> P["Boosted Tree /<br/>AutoML Classifier"]
+        P --> Q["ML.PREDICT"]
     end
 
     subgraph Output
-        J --> K["Daily Pre-Position<br/>Board"]
-        O --> K
-        K --> L["Looker Studio<br/>Dashboard"]
-        H --> L
+        L --> R["Looker Studio<br/>Dashboard"]
+        K --> R
+        M --> R
+        N --> R
+        Q --> R
     end
 
     style A fill:#e8f5e9,stroke:#4caf50
     style C fill:#e3f2fd,stroke:#2196f3
-    style N fill:#fce4ec,stroke:#e91e63
-    style L fill:#fff3e0,stroke:#ff9800
+    style P fill:#fce4ec,stroke:#e91e63
+    style R fill:#fff3e0,stroke:#ff9800
 ```
+
+
 
 ## Quick Start
 
@@ -74,8 +81,8 @@ graph TD
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/biplovbhandari/weathernext-utility-forecasting.git
-cd weathernext-utility-forecasting
+git clone https://github.com/biplovbhandari/weathernext-outage-forecasting.git
+cd weathernext-outage-forecasting
 
 # 2. Install Python dependencies
 pip install -r python/requirements.txt
@@ -90,125 +97,177 @@ gcloud auth application-default login
 # 5. Run setup (uploads CSV to GCS, creates dataset + base tables)
 python python/setup.py
 
-# 6. Run correlation analysis (weather extraction → risk scoring → preboard)
+# 6. IMPORTANT: Check cost before running correlation
+python python/pipeline.py --phase correlation --dry-run
+# Paste the step 01 SQL into BigQuery Console to verify estimated bytes
+
+# 7. Run correlation analysis
 python python/pipeline.py --phase correlation
 
-# 7. Run ML pipeline (training → model → evaluation)
+# 8. (Optional) Run ML pipeline
 python python/pipeline.py --phase ml
 ```
 
 ### Pipeline Phases
 
-| Phase | SQL Folder | What It Does |
-|-------|-----------|--------------|
-| **setup** | `sql/setup/` | Dataset creation, EAGLE-I load, county reference, hourly view (run by `setup.py`) |
-| **correlation** | `sql/correlation/` | WeatherNext extraction, outage join, collapsed signal, risk scoring, crew preboard |
-| **ml** | `sql/ml/` | BQML training data, model training (boosted tree), evaluation & predictions |
+
+| Phase           | SQL Folder         | Steps | What It Does                                                                 |
+| --------------- | ------------------ | ----- | ---------------------------------------------------------------------------- |
+| **setup**       | `sql/setup/`       | 4     | Dataset creation, EAGLE-I load, county reference (run by `setup.py`)         |
+| **correlation** | `sql/correlation/` | 10    | Weather extraction, 6h QC, events, thresholds, risk scoring, lead evaluation |
+| **ml**          | `sql/ml/`          | 3     | BQML training data, model training (boosted tree), evaluation & predictions  |
+
+
+### Correlation Steps Detail
+
+
+| Step | File                               | Type  | Creates                          | Purpose                                                             |
+| ---- | ---------------------------------- | ----- | -------------------------------- | ------------------------------------------------------------------- |
+| 01   | `01_extract_multi_ingredients.sql` | TABLE | `graph_multi_ingredients_hourly` | Extract wind, shear, precip, temp from WeatherNext (expensive step) |
+| 02   | `02_view_eaglei_6h_qc.sql`         | VIEW  | `view_eaglei_6h_qc`              | Aggregate EAGLE-I 15-min data into 6h blocks with QC                |
+| 03   | `03_view_six_hour_grid.sql`        | VIEW  | `view_six_hour_grid`             | Generate county x 6h-timestamp scaffold for balanced joins          |
+| 04   | `04_view_windhail_thresholds.sql`  | VIEW  | `view_windhail_thresholds`       | Compute p90/p80 percentile thresholds per county                    |
+| 05   | `05_view_outage_vs_wx_6h_qc.sql`   | VIEW  | `view_outage_vs_wx_6h_qc`        | Master join: weather + outages + QC on 6h grid                      |
+| 06   | `06_events_restoration.sql`        | TABLE | `events_restoration`             | Gap-tolerant outage event detection                                 |
+| 07   | `07_event_coverage_wx.sql`         | TABLE | `event_coverage_wx`              | Per-event detection flags at each lead hour                         |
+| 08   | `08_view_daily_plan.sql`           | VIEW  | `view_daily_plan`                | Daily risk tiers (HIGH/MEDIUM/LOW) with reason codes                |
+| 09   | `09_lead_performance.sql`          | TABLE | `lead_performance`               | Precision, recall, F1 per lead hour                                 |
+| 10   | `10_correlations.sql`              | TABLE | `correlations`                   | Pearson correlation per county per lead                             |
+
 
 ### CLI Options
 
 ```bash
 python python/pipeline.py --phase correlation    # Correlation only
 python python/pipeline.py --phase ml             # ML only
-python python/pipeline.py --phase all             # Both (correlation + ml)
-python python/pipeline.py --dry-run              # Print SQL without executing
-python python/pipeline.py --dry-run -v           # Print full parameterized SQL
+python python/pipeline.py --phase all            # Both (correlation + ml)
+python python/pipeline.py --dry-run              # Print resolved SQL (paste into BQ Console for cost check)
 python python/pipeline.py --resume               # Resume after failure (skip completed steps)
 ```
 
-> **Note:** `--resume` is for failure recovery — it skips steps whose target already exists. Do NOT use it after changing `.env` config (counties, dates, leads), or stale data will be kept. See [docs/architecture.md](docs/architecture.md#understanding---resume) for details.
+> **Cost warning:** Always run `--dry-run` first and verify estimated bytes in BigQuery Console before executing. Step 01 (WeatherNext extraction) is the main cost driver. See [docs/cost-estimates.md](docs/cost-estimates.md).
+
+> **Note on `--resume`:** This is for failure recovery only. It skips steps whose target already exists. Do NOT use after changing `.env` config (counties, dates, leads), or stale data will be kept. See [docs/architecture.md](docs/architecture.md#understanding---resume).
 
 ### What the pipeline produces
 
-- **Weather features table** — Wind speed and precipitation from WeatherNext, 24–48h lead per county
-- **Outage vs weather view** — Joined table for correlation analysis
-- **Risk scoring view** — Composite risk score (HIGH/MEDIUM/LOW tiers)
-- **Daily preboard** — Crew pre-positioning recommendations per county
-- **ML predictions** — Outage probability scored by BQML boosted tree classifier
+- **Weather features table** -- Multi-ingredient forecasts (wind, shear, hail proxy, precip) per county per 6h block per lead
+- **6h QC outage view** -- Quality-controlled outage data aligned to 6h forecast windows
+- **Per-county thresholds** -- Data-driven p90/p80 percentiles (no manual tuning needed)
+- **Outage events** -- Gap-tolerant event detection with start/end/peak
+- **Event coverage** -- Did each forecast lead detect the event? Earliest warning lead
+- **Daily risk board** -- HIGH/MEDIUM/LOW tier per county per day with reason codes
+- **Lead performance** -- Precision, recall, F1 at each forecast lead time
+- **Correlations** -- Pearson r between each weather feature and outage severity
+- **ML predictions** -- Outage probability scored by BQML boosted tree classifier
 
 ## Project Structure
 
 ```
-weathernext-utility-forecasting/
+weathernext-outage-forecasting/
 ├── README.md
+├── CONTRIBUTING.md
+├── LICENSE
 ├── config/
-│   └── .env.example                   # Environment variable template
+│   └── .env.example                              # Environment variable template
 ├── python/
-│   ├── requirements.txt               # Python dependencies
-│   ├── config.py                      # Configuration from .env
-│   ├── setup.py                       # One-time setup (GCS upload + base tables)
-│   └── pipeline.py                    # SQL pipeline orchestrator
+│   ├── requirements.txt                          # Python dependencies
+│   ├── config.py                                 # Configuration from .env
+│   ├── setup.py                                  # One-time setup (GCS upload + base tables)
+│   └── pipeline.py                               # SQL pipeline orchestrator
 ├── sql/
-│   ├── setup/                         # Base tables (run by setup.py)
+│   ├── setup/                                    # Base tables (run by setup.py)
 │   │   ├── 01_setup_dataset.sql
 │   │   ├── 02_create_eaglei_raw.sql
 │   │   ├── 03_create_eaglei_partitioned.sql
-│   │   ├── 04_create_counties_ref.sql
-│   │   └── 05_create_view_eaglei_hourly.sql
-│   ├── correlation/                   # Weather → risk analysis
-│   │   ├── 01_extract_weather_features.sql
-│   │   ├── 02_create_view_outage_vs_weather.sql
-│   │   ├── 03_create_view_collapsed_signal.sql
-│   │   ├── 04_risk_scoring.sql
-│   │   └── 05_daily_preboard.sql
-│   └── ml/                            # ML training + evaluation
+│   │   └── 04_create_counties_ref.sql
+│   ├── correlation/                              # Weather + outage analysis (10 steps)
+│   │   ├── 01_extract_multi_ingredients.sql      # TABLE: WeatherNext extraction
+│   │   ├── 02_view_eaglei_6h_qc.sql             # VIEW: 6h outage blocks with QC
+│   │   ├── 03_view_six_hour_grid.sql             # VIEW: county x time scaffold
+│   │   ├── 04_view_windhail_thresholds.sql       # VIEW: p90/p80 thresholds
+│   │   ├── 05_view_outage_vs_wx_6h_qc.sql       # VIEW: master join
+│   │   ├── 06_events_restoration.sql             # TABLE: outage event detection
+│   │   ├── 07_event_coverage_wx.sql              # TABLE: event forecast coverage
+│   │   ├── 08_view_daily_plan.sql                # VIEW: daily risk tiers
+│   │   ├── 09_lead_performance.sql               # TABLE: precision/recall/F1
+│   │   └── 10_correlations.sql                   # TABLE: feature correlations
+│   └── ml/                                       # ML training + evaluation
 │       ├── 01_bqml_training_data.sql
 │       ├── 02_bqml_create_model.sql
 │       └── 03_bqml_evaluate.sql
 ├── looker/
-│   └── dashboard-views.sql            # Looker Studio-optimized views
-└── docs/
-    ├── architecture.md
-    ├── concepts.md
-    ├── cost-estimates.md
-    ├── data-sources.md
-    ├── looker-studio-guide.md
-    └── vertex-ai-guide.md
+│   └── dashboard-views.sql                       # Looker Studio-optimized views
 ```
 
 ## Key Concepts
 
 ### WeatherNext Graph
 
-Google DeepMind's deterministic AI weather model, accessible via BigQuery Analytics Hub. Produces 10-day forecasts at 6-hourly resolution with global coverage. Key fields used: 10m wind components (u, v), 6-hour precipitation, 2m temperature.
+Google DeepMind's deterministic AI weather model, accessible via BigQuery Analytics Hub. Produces 10-day forecasts at 6-hourly resolution with global coverage. The table is partitioned by `init_time` and clustered by `geography`. Key fields used: 10m wind (u, v), 925 hPa wind, temperature (700/850 hPa), 6-hour precipitation, and derived features (wind shear, updraft proxy, hail flag).
 
 ### EAGLE-I
 
-The US Department of Energy's power outage tracker. Reports county-level outage counts at 15-minute intervals. We compute `outage_ratio = customers_out / total_customers` as the primary metric.
+The US Department of Energy's power outage tracker. Reports county-level outage counts at 15-minute intervals. We aggregate to 6-hour blocks aligned with WeatherNext's temporal resolution and compute `outage_ratio = customers_out / total_customers`.
 
-### Spatial Joins
+### 6-Hour Alignment and QC
 
-WeatherNext forecasts are on a global grid. We use `ST_INTERSECTS()` in BigQuery to match grid cells to US county polygons, then aggregate (MAX wind, MEAN precipitation) per county per hour.
+WeatherNext forecasts at 6-hour temporal resolution. We align EAGLE-I data to matching 6-hour blocks (00-06Z, 06-12Z, etc.) and apply quality control: blocks with fewer than `MIN_SAMPLES_PER_BLOCK` readings (expect ~24 at 15-min cadence) are flagged as low-quality.
+
+### Multi-Ingredient Features
+
+Beyond basic 10m wind, we extract multiple weather ingredients that correlate with outage risk:
+
+- **10m wind speed** (`ws10`): direct tree/infrastructure damage
+- **925 hPa wind speed** (`ws925`): low-level jet indicator
+- **0-6 km wind shear** (`shear`): severe storm potential
+- **Updraft proxy** (`updraft700`): convective activity
+- **Hail flag**: `t700 <= 0C AND precip >= 2mm` (freezing + moisture)
+
+### Per-County Thresholds
+
+Instead of fixed thresholds, we compute data-driven percentiles per county:
+
+- **p90** for wind metrics (10m, 925 hPa, shear) -- flags the top 10% of weather
+- **p80** for updraft proxy (more permissive since updraft events are rarer)
+
+### Event Detection
+
+Gap-tolerant outage event detection groups consecutive elevated-outage readings into discrete events, tolerating gaps of up to `EVENT_GAP_MINUTES`. Each event has start/end times, duration, and peak outage ratio. Event coverage analysis then checks whether forecasts at each lead time detected the event.
 
 ### Lead-Qualified Forecasts
 
-We keep forecasts at multiple lead times (24, 30, 36, 42, 48 hours) separately, then collapse to a "worst case" signal. If *any* lead time flags high wind, the hour is flagged. This supports operational messaging like "flagged at both 48h and 24h — high confidence."
+We evaluate forecasts at multiple lead times (24, 30, 36, 42, 48 hours) separately. Lead performance metrics (precision, recall, F1) show how forecast skill degrades with lead time. Event coverage flags show the earliest lead that detected each event.
 
 ### ML Prediction (BQML / Vertex AI)
 
-The project supports two approaches to outage prediction. The **threshold-based** approach (`sql/correlation/`) uses manually tuned wind/precip thresholds for transparent, explainable risk scoring. The **ML-based** approach (`sql/ml/`) trains a classifier on weather features to predict outage probability directly. BQML boosted trees stay entirely in SQL; Vertex AI AutoML (documented in [docs/vertex-ai-guide.md](docs/vertex-ai-guide.md)) provides maximum accuracy. The original demo achieved precision ~0.67, recall ~0.89, F1 ~0.76 with AutoML.
+The **threshold-based** approach (`sql/correlation/`) uses per-county percentile thresholds for transparent, explainable risk scoring. The **ML-based** approach (`sql/ml/`) trains a classifier on weather features to predict outage probability directly. BQML boosted trees stay entirely in SQL; Vertex AI AutoML (documented in [docs/vertex-ai-guide.md](docs/vertex-ai-guide.md)) provides maximum accuracy.
 
 ## Expected Costs
 
-| Scale | Monthly Estimate | Notes |
-|-------|-----------------|-------|
-| 2-county demo (10 days) | < $1 | Minimal BigQuery scans |
-| State-level (1 month) | $5–20 | ~50 counties, daily runs |
-| Regional (multi-state, 1 month) | $20–50 | ~200 counties |
-| National (all US, 1 month) | $50–200 | ~3,200 counties |
+> **Always verify cost with `--dry-run` before running.** Step 01 (WeatherNext extraction) is the main cost driver. Paste the resolved SQL into BigQuery Console to check estimated bytes.
 
-See [docs/cost-estimates.md](docs/cost-estimates.md) for detailed breakdown.
+
+| Scale                           | Estimated Cost | Notes                                                 |
+| ------------------------------- | -------------- | ----------------------------------------------------- |
+| 2-county demo (10 days)         | $1-5           | Depends on WeatherNext table size and cluster pruning |
+| State-level (1 month)           | $5-20          | ~50 counties                                          |
+| Regional (multi-state, 1 month) | $20-50         | ~200 counties                                         |
+| National (all US, 1 month)      | $50-200        | ~3,200 counties                                       |
+
+
+See [docs/cost-estimates.md](docs/cost-estimates.md) for detailed breakdown and optimization strategies.
 
 ## Results
 
 The Alabama demo (May 2024) demonstrates:
 
-- **Correlation** between WeatherNext wind forecasts and EAGLE-I outage ratios
-- **Hit/miss analysis** showing forecast skill at wind ≥ 17 m/s threshold
-- **Lead time comparison** showing correlation by forecast lead (24h vs 48h)
-- **Risk scoring** with HIGH/MEDIUM/LOW tiers for crew pre-positioning
+- **Multi-lead correlation** between WeatherNext wind/shear forecasts and EAGLE-I outage ratios
+- **Event detection** with coverage analysis across forecast lead times
+- **Lead performance** showing precision/recall/F1 by forecast lead (24h vs 48h)
+- **Risk scoring** with data-driven HIGH/MEDIUM/LOW tiers for crew pre-positioning
 
-Dashboard outputs are designed for Looker Studio — see [docs/looker-studio-guide.md](docs/looker-studio-guide.md) for setup.
+Dashboard outputs are designed for Looker Studio -- see [docs/looker-studio-guide.md](docs/looker-studio-guide.md) for setup.
 
 ## Contributing
 
@@ -216,19 +275,19 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Ideas for contributions:
 
-- Additional weather variables (hail, icing, temperature extremes)
 - WeatherNext Gen (ensemble) support for probabilistic forecasts
 - Alternative visualization (Streamlit, Dash, or Superset dashboards)
-- ML models for outage prediction (beyond threshold-based)
-- Automation with Cloud Scheduler for daily operational runs
 - Additional outage data sources beyond EAGLE-I
+- Automation with Cloud Scheduler for daily operational runs
+- Regional calibration with tuned thresholds for different climate zones
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache 2.0 -- see [LICENSE](LICENSE).
 
 ## Acknowledgments
 
 - [Google DeepMind](https://deepmind.google/) for WeatherNext AI weather forecasts
 - [US Department of Energy](https://eagle-i.doe.gov/) for EAGLE-I outage data
 - [BigQuery GIS](https://cloud.google.com/bigquery/docs/gis-intro) for spatial analysis capabilities
+

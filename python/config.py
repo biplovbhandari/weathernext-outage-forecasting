@@ -11,23 +11,23 @@ WEATHERNEXT_TABLE = os.getenv("WEATHERNEXT_TABLE")
 COUNTY_FIPS = os.getenv("COUNTY_FIPS")
 START_DATE = os.getenv("START_DATE")
 END_DATE = os.getenv("END_DATE")
-MIN_LEAD_HOURS = os.getenv("MIN_LEAD_HOURS", "24")
-MAX_LEAD_HOURS = os.getenv("MAX_LEAD_HOURS", "48")
+LEAD_HOURS = os.getenv("LEAD_HOURS", "24,30,36,42,48")
+INIT_HOURS = os.getenv("INIT_HOURS", "0")
 GCS_BUCKET = os.getenv("GCS_BUCKET")
 GCS_BUCKET_LOCATION = os.getenv("GCS_BUCKET_LOCATION", "us-central1")
 GCS_EAGLEI_CSV_PATH = os.getenv("GCS_EAGLEI_CSV_PATH", "")
 LOCAL_EAGLEI_CSV_PATH = os.getenv("LOCAL_EAGLEI_CSV_PATH", "")
+SPATIAL_BUFFER_M = os.getenv("SPATIAL_BUFFER_M", "25000")
 
-# Risk scoring thresholds (SQL files have sensible defaults)
-WIND_THRESHOLD_LOW = os.getenv("WIND_THRESHOLD_LOW")
-WIND_THRESHOLD_HIGH = os.getenv("WIND_THRESHOLD_HIGH")
-PRECIP_THRESHOLD_LOW = os.getenv("PRECIP_THRESHOLD_LOW")
-PRECIP_THRESHOLD_HIGH = os.getenv("PRECIP_THRESHOLD_HIGH")
-WIND_WEIGHT = os.getenv("WIND_WEIGHT")
-PRECIP_WEIGHT = os.getenv("PRECIP_WEIGHT")
+# ML threshold
+OUTAGE_THRESHOLD = os.getenv("OUTAGE_THRESHOLD", "0.05")
 
-# ML threshold (used by ml steps)
-OUTAGE_THRESHOLD = os.getenv("OUTAGE_THRESHOLD")
+# Event detection
+EVENT_OUTAGE_THRESHOLD = os.getenv("EVENT_OUTAGE_THRESHOLD", "0.005")
+EVENT_GAP_MINUTES = os.getenv("EVENT_GAP_MINUTES", "60")
+
+# QC
+MIN_SAMPLES_PER_BLOCK = os.getenv("MIN_SAMPLES_PER_BLOCK", "8")
 
 def validate_config(is_setup=False):
     """Validates that all required configuration variables are present."""
@@ -50,6 +50,39 @@ def validate_config(is_setup=False):
     if missing:
         raise ValueError(f"Missing required environment variables in config/.env: {', '.join(missing)}")
 
+def get_sql_init_hours_array() -> str:
+    """Converts comma-separated init hours to SQL INT64 array."""
+    hours = [h.strip() for h in INIT_HOURS.split(',')]
+    return f"[{', '.join(hours)}]"
+
+def get_sql_init_timestamps() -> str:
+    """Generate explicit init_time timestamps for partition pruning.
+
+    Produces a SQL TIMESTAMP array with one entry per (date, init_hour) combination
+    covering the full date range needed for the configured lead window.
+    """
+    from datetime import datetime, timedelta
+
+    start = datetime.strptime(START_DATE, '%Y-%m-%d')
+    end = datetime.strptime(END_DATE, '%Y-%m-%d')
+    max_lead = max(int(h.strip()) for h in LEAD_HOURS.split(','))
+    hours = [int(h.strip()) for h in INIT_HOURS.split(',')]
+
+    # Earliest init_time: a forecast made max_lead hours before start could
+    # have valid times within the window
+    earliest = start - timedelta(hours=max_lead)
+    earliest_date = earliest.replace(hour=0, minute=0, second=0)
+
+    timestamps = []
+    d = earliest_date
+    while d <= end:
+        for h in hours:
+            ts = d.replace(hour=h, minute=0, second=0)
+            timestamps.append(f"TIMESTAMP('{ts.strftime('%Y-%m-%d %H:%M:%S')}')")
+        d += timedelta(days=1)
+
+    return f"[{', '.join(timestamps)}]"
+
 def get_sql_fips_array() -> str:
     """Converts the comma-separated fips codes into a string representation of a SQL array."""
     if not COUNTY_FIPS:
@@ -57,3 +90,16 @@ def get_sql_fips_array() -> str:
     fips_list = [f.strip() for f in COUNTY_FIPS.split(',')]
     fips_formatted = ", ".join([f"'{f}'" for f in fips_list])
     return f"[{fips_formatted}]"
+
+def get_sql_fips_tuple() -> str:
+    """Converts comma-separated fips codes to SQL tuple: ('01051', '01101')."""
+    if not COUNTY_FIPS:
+        return "()"
+    fips_list = [f.strip() for f in COUNTY_FIPS.split(',')]
+    fips_formatted = ", ".join([f"'{f}'" for f in fips_list])
+    return f"({fips_formatted})"
+
+def get_sql_lead_hours_array() -> str:
+    """Converts comma-separated lead hours to SQL INT64 array: [24, 30, 36, 42, 48]."""
+    hours = [h.strip() for h in LEAD_HOURS.split(',')]
+    return f"[{', '.join(hours)}]"

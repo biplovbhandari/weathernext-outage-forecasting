@@ -21,11 +21,7 @@ EXECUTE IMMEDIATE FORMAT("""
     USING (state_fips_code)
 """, gcp_project, dataset_name);
 
--- If you want to filter by state, run this instead:
--- CREATE OR REPLACE TABLE `YOUR_PROJECT.YOUR_DATASET.counties_ref` AS
--- SELECT c.county_fips_code, c.state_fips_code, s.state_name,
---        c.county_name, c.county_geom
--- FROM `bigquery-public-data.geo_us_boundaries.counties` c
--- LEFT JOIN `bigquery-public-data.geo_us_boundaries.states` s
---   USING (state_fips_code)
--- WHERE s.state_name IN UNNEST(@target_states);
+
+-- To filter by state, add a WHERE clause to the query above:
+--   WHERE s.state_name IN ('Alabama', 'Georgia')
+-- Or set the target_states DECLARE and use EXECUTE IMMEDIATE with USING.

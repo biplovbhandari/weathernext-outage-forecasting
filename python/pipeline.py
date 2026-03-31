@@ -10,7 +10,7 @@ Usage:
     python pipeline.py                        # Run correlation + ml
     python pipeline.py --phase correlation    # Correlation only (weather → risk)
     python pipeline.py --phase ml             # ML only (training → model → evaluate)
-    python pipeline.py --dry-run              # Print SQL, don't execute
+    python pipeline.py --dry-run              # Print resolved SQL (pasteable into BQ Console)
     python pipeline.py --resume               # Skip steps whose target already exists
 """
 
@@ -46,24 +46,16 @@ def build_replacement_map():
         'weathernext_tbl': f"'{config.WEATHERNEXT_TABLE}'",
         'county_fips':     config.get_sql_fips_array(),
         'start_ts':        f"TIMESTAMP('{config.START_DATE} 00:00:00')",
-        'end_ts':          f"TIMESTAMP('{config.END_DATE} 23:59:59')",
-        'min_lead':        config.MIN_LEAD_HOURS,
-        'max_lead':        config.MAX_LEAD_HOURS,
-    }
-
-    # Risk scoring / ML thresholds — only override if set in .env
-    risk_scoring_ml_thresholds = {
-        'wind_low':         config.WIND_THRESHOLD_LOW,
-        'wind_high':        config.WIND_THRESHOLD_HIGH,
-        'precip_low':       config.PRECIP_THRESHOLD_LOW,
-        'precip_high':      config.PRECIP_THRESHOLD_HIGH,
-        'w_wind':           config.WIND_WEIGHT,
-        'w_precip':         config.PRECIP_WEIGHT,
+        'end_ts':          f"TIMESTAMP('{config.END_DATE} 00:00:00')",
+        'init_hours':      config.get_sql_init_hours_array(),
+        'init_timestamps': config.get_sql_init_timestamps(),
+        'lead_hours_arr':  config.get_sql_lead_hours_array(),
+        'spatial_buffer_m': config.SPATIAL_BUFFER_M,
         'outage_threshold': config.OUTAGE_THRESHOLD,
+        'event_out_thr':   config.EVENT_OUTAGE_THRESHOLD,
+        'event_gap_min':   config.EVENT_GAP_MINUTES,
+        'min_samples':     config.MIN_SAMPLES_PER_BLOCK,
     }
-    for name, value in risk_scoring_ml_thresholds.items():
-        if value is not None:
-            replacements[name] = value
 
     return replacements
 
@@ -77,6 +69,115 @@ def apply_variables(sql_content, replacements):
         return m.group(0)
 
     return DECLARE_RE.sub(replace_match, sql_content)
+
+
+def extract_declares(sql):
+    """Extract DECLARE variable names and their default values from SQL."""
+    declares = {}
+    for m in DECLARE_RE.finditer(sql):
+        var_name = m.group(2)
+        raw_value = m.group(3).strip()
+        declares[var_name] = raw_value
+    return declares
+
+
+def resolve_format(sql):
+    """Resolve EXECUTE IMMEDIATE FORMAT(...) into plain SQL.
+
+    Replaces FORMAT %s/%f placeholders with DECLARE values, resolves
+    @param references from USING clauses, and strips the EXECUTE IMMEDIATE
+    wrapper. Returns plain SQL pasteable into BigQuery Console.
+    """
+    declares = extract_declares(sql)
+
+    # Pattern to match: EXECUTE IMMEDIATE FORMAT(""" ... """, args) [INTO var] [USING ...];
+    # Handle multiple EXECUTE IMMEDIATE blocks in one file
+    block_re = re.compile(
+        r'EXECUTE\s+IMMEDIATE\s+FORMAT\s*\(\s*"""'  # EXECUTE IMMEDIATE FORMAT("""
+        r'(.*?)'                                     # group 1: template body
+        r'"""\s*,\s*'                                # """,
+        r'(.*?)'                                     # group 2: format args
+        r'\)\s*'                                     # )
+        r'(?:INTO\s+(\w+)\s*)?'                      # group 3: optional INTO var_name
+        r'(?:USING\s+(.*?)\s*)?'                     # group 4: optional USING clause
+        r';',                                        # ;
+        re.DOTALL
+    )
+
+    # Find runtime DECLARE lines (no DEFAULT) — these are preserved in output
+    runtime_declare_re = re.compile(
+        r'^(DECLARE\s+\w+\s+\S+\s*;)\s*$',
+        re.MULTILINE
+    )
+    runtime_declares = runtime_declare_re.findall(sql)
+
+    resolved_blocks = []
+
+    for m in block_re.finditer(sql):
+        template = m.group(1)
+        args_str = m.group(2)
+        into_var = m.group(3)
+        using_str = m.group(4)
+
+        # Parse FORMAT arguments (comma-separated variable names)
+        args = [a.strip() for a in args_str.split(',') if a.strip()]
+
+        # Resolve FORMAT placeholders (%s, %f) with DECLARE values
+        resolved = template
+        for arg in args:
+            if arg not in declares:
+                continue
+            val = declares[arg]
+            # Find the next placeholder (%s or %f)
+            idx_s = resolved.find('%s')
+            idx_f = resolved.find('%f')
+            if idx_s >= 0 and (idx_f < 0 or idx_s < idx_f):
+                # Next placeholder is %s — strip quotes for identifiers
+                resolved = resolved.replace('%s', val.strip("'"), 1)
+            elif idx_f >= 0:
+                # Next placeholder is %f — use value as-is (numeric)
+                resolved = resolved.replace('%f', val, 1)
+
+        # Resolve @param references from USING clause
+        if using_str:
+            # Parse "var AS alias, var2 AS alias2"
+            for pair in using_str.split(','):
+                pair = pair.strip()
+                parts = re.split(r'\s+AS\s+', pair, flags=re.IGNORECASE)
+                if len(parts) == 2:
+                    var_name = parts[0].strip()
+                    alias = parts[1].strip().rstrip(';')
+                    if var_name in declares:
+                        resolved = resolved.replace(f'@{alias}', declares[var_name])
+                    else:
+                        # Runtime variable (e.g., target_aoi from SET) —
+                        # strip @ prefix for plain script reference
+                        resolved = resolved.replace(f'@{alias}', alias)
+
+        # Convert IN UNNEST([...]) to flat IN (...) for partition pruning
+        # BigQuery only prunes partitions on flat IN with literal values
+        resolved = re.sub(
+            r'IN\s+UNNEST\(\[([^\]]+)\]\)',
+            r'IN (\1)',
+            resolved
+        )
+
+        # Handle INTO pattern: produce SET statement
+        if into_var:
+            block = f"SET {into_var} = (\n{resolved.strip()}\n);"
+        else:
+            block = resolved.strip()
+            if not block.endswith(';'):
+                block += ';'
+        resolved_blocks.append(block)
+
+    if not resolved_blocks:
+        # No FORMAT blocks found — return SQL with just DECLARE lines stripped
+        return re.sub(r'^DECLARE\s+.*?;\s*\n', '', sql, flags=re.MULTILINE).strip()
+
+    # Prepend runtime DECLARE lines (no DEFAULT) before resolved blocks
+    parts = runtime_declares + resolved_blocks
+    return '\n\n'.join(parts)
 
 
 def discover_sql_files(phase):
@@ -94,41 +195,29 @@ def discover_sql_files(phase):
     return files
 
 
-def get_target_object(sql):
-    """Extract target table/view/model name from CREATE OR REPLACE statement.
-
-    SQL files use FORMAT(\"\"\"CREATE ... `%s.%s.name`\"\"\", project, dataset)
-    so we resolve %s placeholders from DECLARE variable defaults.
-    """
+def get_target_object(resolved_sql):
+    """Extract target table/view/model name from resolved SQL."""
     match = re.search(
-        r'CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW|MODEL)\s+`([^`]+)`',
-        sql, re.IGNORECASE
+        r'CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW|MODEL|SCHEMA)'
+        r'\s+(?:IF\s+NOT\s+EXISTS\s+)?`([^`]+)`',
+        resolved_sql, re.IGNORECASE
+    )
+    return match.group(1) if match else None
+
+
+def _detect_object_type(resolved_sql):
+    """Detect if resolved SQL creates a TABLE, VIEW, MODEL, or SCHEMA."""
+    match = re.search(
+        r'CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW|MODEL|SCHEMA)',
+        resolved_sql, re.IGNORECASE
     )
     if not match:
         return None
-
-    name = match.group(1)
-    if '%' not in name:
-        return name
-
-    # Extract DECLARE STRING variable values (already substituted by apply_variables)
-    declares = {}
-    for m in re.finditer(r"DECLARE\s+(\w+)\s+STRING\s+DEFAULT\s+'([^']+)'", sql):
-        declares[m.group(1)] = m.group(2)
-
-    # Resolve %s placeholders: first two are always gcp_project, dataset_name
-    resolved = name
-    if 'gcp_project' in declares:
-        resolved = resolved.replace('%s', declares['gcp_project'], 1)
-    if 'dataset_name' in declares:
-        resolved = resolved.replace('%s', declares['dataset_name'], 1)
-    # Third %s (if present) is the output table name variable
-    for var in ['output_table', 'weather_table']:
-        if '%s' in resolved and var in declares:
-            resolved = resolved.replace('%s', declares[var], 1)
-            break
-
-    return resolved if '%' not in resolved else None
+    token = match.group(0).upper()
+    for t in ('VIEW', 'TABLE', 'MODEL', 'SCHEMA'):
+        if t in token:
+            return t
+    return None
 
 
 def object_exists(client, full_name):
@@ -141,27 +230,41 @@ def object_exists(client, full_name):
 
 
 def execute_step(client, phase, filename, sql, dry_run, verbose, resume=False):
-    """Execute a single SQL step. Returns True on success, 'SKIP' if skipped."""
+    """Execute a single SQL step. Returns True on success."""
     print(f"\n{'='*60}")
     print(f"  [{phase}] {filename}")
     print(f"{'='*60}")
 
+    # Resolve EXECUTE IMMEDIATE FORMAT into plain SQL
+    resolved_sql = resolve_format(sql)
+
     if resume and client:
-        target = get_target_object(sql)
+        target = get_target_object(resolved_sql)
         if target and object_exists(client, target):
             print(f"  SKIP (already exists: {target})")
             return True
 
-    if verbose or dry_run:
-        print(sql)
+    if dry_run or verbose:
+        print(resolved_sql)
 
     if dry_run:
-        print(f"  [DRY RUN] Skipped execution")
+        # Detect object type and print cost guidance
+        obj_type = _detect_object_type(resolved_sql)
+        target = get_target_object(resolved_sql)
+        target_name = target.split('.')[-1] if target else '?'
+        if obj_type == 'VIEW':
+            print(f"\n  [DRY RUN] {obj_type} ({target_name}) -- $0 to create")
+        elif obj_type == 'SCHEMA':
+            print(f"\n  [DRY RUN] {obj_type} ({target_name}) -- $0 to create")
+        elif obj_type in ('TABLE', 'MODEL'):
+            print(f"\n  [DRY RUN] {obj_type} ({target_name}) -- paste SELECT into BQ Console to check cost")
+        else:
+            print(f"\n  [DRY RUN] Skipped execution")
         return True
 
     start_time = time.time()
     try:
-        job = client.query(sql)
+        job = client.query(resolved_sql)
         job.result()
         elapsed = time.time() - start_time
 
@@ -210,13 +313,12 @@ def parse_args():
             "  python pipeline.py                        # Run all phases\n"
             "  python pipeline.py --phase correlation    # Correlation only\n"
             "  python pipeline.py --phase ml             # ML only\n"
-            "  python pipeline.py --dry-run              # Print SQL, don't execute\n"
-            "  python pipeline.py --dry-run -v           # Print full SQL\n"
+            "  python pipeline.py --dry-run              # Print resolved SQL (pasteable into BQ Console)\n"
             "  python pipeline.py --resume               # Skip completed steps\n"
         )
     )
     parser.add_argument('--dry-run', action='store_true',
-        help='Print parameterized SQL without executing')
+        help='Print resolved plain SQL without executing (pasteable into BigQuery Console)')
     parser.add_argument('--phase', choices=['correlation', 'ml', 'all'],
         default='all',
         help='Pipeline phase to run (default: all)')
@@ -244,7 +346,8 @@ def main():
     print(f"  Dataset:  {config.DATASET_NAME}")
     print(f"  Counties: {config.get_sql_fips_array()}")
     print(f"  Window:   {config.START_DATE} to {config.END_DATE}")
-    print(f"  Leads:    {config.MIN_LEAD_HOURS}h to {config.MAX_LEAD_HOURS}h")
+    print(f"  Leads:    {config.LEAD_HOURS}")
+    print(f"  Init hrs: {config.INIT_HOURS} (UTC)")
     print(f"  Phases:   {', '.join(phases)}")
     if args.dry_run:
         print(f"  Mode:     DRY RUN")
