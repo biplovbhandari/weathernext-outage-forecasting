@@ -12,8 +12,10 @@
 
 DECLARE gcp_project  STRING DEFAULT 'YOUR_GCP_PROJECT';
 DECLARE dataset_name STRING DEFAULT 'weathernext_demo';
-DECLARE start_ts     TIMESTAMP DEFAULT TIMESTAMP('2024-05-06 00:00:00');
-DECLARE end_ts       TIMESTAMP DEFAULT TIMESTAMP('2024-05-15 00:00:00');
+DECLARE start_ts        TIMESTAMP DEFAULT TIMESTAMP('2024-05-06 00:00:00');
+DECLARE end_ts          TIMESTAMP DEFAULT TIMESTAMP('2024-05-15 00:00:00');
+DECLARE hail_temp_thr   FLOAT64   DEFAULT 0.0;
+DECLARE hail_precip_thr FLOAT64   DEFAULT 2.0;
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE VIEW `%s.%s.view_outage_vs_wx_6h_qc` AS
@@ -52,7 +54,7 @@ EXECUTE IMMEDIATE FORMAT("""
     w.tp6_mm_max,
 
     -- Hail flag: freezing level + moisture
-    IF(w.t700_c_min <= 0.0 AND w.tp6_mm_max >= 2.0, 1, 0) AS hail_flag,
+    IF(w.t700_c_min <= @hail_temp_thr AND w.tp6_mm_max >= @hail_precip_thr, 1, 0) AS hail_flag,
 
     -- Outage (from 6-hour QC blocks)
     e.outage_ratio_6h_max,
@@ -75,4 +77,6 @@ EXECUTE IMMEDIATE FORMAT("""
 )
 USING
   start_ts AS start_ts,
-  end_ts AS end_ts;
+  end_ts AS end_ts,
+  hail_temp_thr AS hail_temp_thr,
+  hail_precip_thr AS hail_precip_thr;

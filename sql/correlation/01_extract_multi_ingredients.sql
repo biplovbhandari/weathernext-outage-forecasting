@@ -8,15 +8,6 @@
 -- The WeatherNext table is:
 --   - Partitioned by init_time (DAY)
 --   - Clustered by geography
---
--- Using a pre-computed AOI variable with ST_INTERSECTS(t.geography, ...) lets
--- BigQuery use the cluster index, reducing scan from ~186 GB to ~200 MB.
---
--- COST OPTIMIZATION NOTES:
---   - Cluster pruning via ST_INTERSECTS(t.geography, target_aoi) is CRITICAL
---   - Partition pruning via literal init_time IN (...) reduces partition scans
---   - UNNEST only happens on cluster-pruned rows (massive reduction)
---   - Use --dry-run -v to get pasteable SQL for bq --dry_run cost estimation
 -- ============================================================================
 
 -- ┌─────────────────────────────────────────────────────────┐

@@ -16,6 +16,8 @@ DECLARE dataset_name      STRING  DEFAULT 'weathernext_demo';
 DECLARE outage_threshold  FLOAT64 DEFAULT 0.05;
 DECLARE min_samples       INT64   DEFAULT 8;
 DECLARE lead_hours_arr    ARRAY<INT64> DEFAULT [24, 30, 36, 42, 48];
+DECLARE hail_temp_thr     FLOAT64 DEFAULT 0.0;
+DECLARE hail_precip_thr   FLOAT64 DEFAULT 2.0;
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE TABLE `%s.%s.lead_performance` AS
@@ -40,8 +42,8 @@ EXECUTE IMMEDIATE FORMAT("""
        OR v.ws925_max_mps >= p.p90_ws925
        OR v.shear_0_6km_max_mps >= p.p90_shear) AS x_wind,
 
-      (v.t700_c_min <= 0.0
-       AND v.tp6_mm_max >= 2.0) AS x_hail,
+      (v.t700_c_min <= @hail_temp_thr
+       AND v.tp6_mm_max >= @hail_precip_thr) AS x_hail,
 
       (v.outage_ratio_6h_max >= @outage_threshold) AS y_outage
     FROM `%s.%s.view_outage_vs_wx_6h_qc` v
@@ -90,4 +92,6 @@ EXECUTE IMMEDIATE FORMAT("""
 USING
   outage_threshold AS outage_threshold,
   min_samples AS min_samples,
-  lead_hours_arr AS lead_hours_arr;
+  lead_hours_arr AS lead_hours_arr,
+  hail_temp_thr AS hail_temp_thr,
+  hail_precip_thr AS hail_precip_thr;

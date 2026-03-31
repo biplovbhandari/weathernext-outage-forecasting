@@ -55,6 +55,10 @@ def build_replacement_map():
         'event_out_thr':   config.EVENT_OUTAGE_THRESHOLD,
         'event_gap_min':   config.EVENT_GAP_MINUTES,
         'min_samples':     config.MIN_SAMPLES_PER_BLOCK,
+        'hail_temp_thr':   config.HAIL_TEMP_THRESHOLD,
+        'hail_precip_thr': config.HAIL_PRECIP_THRESHOLD,
+        'wind_consist_min': config.WIND_CONSISTENCY_MIN,
+        'hail_consist_min': config.HAIL_CONSISTENCY_MIN,
     }
 
     return replacements
@@ -81,103 +85,107 @@ def extract_declares(sql):
     return declares
 
 
+def _find_runtime_declares(sql):
+    """Find DECLARE lines without DEFAULT (runtime variables like target_aoi)."""
+    return re.findall(r'^(DECLARE\s+\w+\s+\S+\s*;)\s*$', sql, re.MULTILINE)
+
+
+def _resolve_placeholders(template, args, declares):
+    """Replace FORMAT %s/%f placeholders with DECLARE values.
+
+    Walks through args in order, matching each to the next %s or %f
+    placeholder in the template. %s strips quotes (for identifiers),
+    %f keeps the value as-is (for numerics).
+    """
+    resolved = template
+    for arg in args:
+        if arg not in declares:
+            continue
+        val = declares[arg]
+        idx_s = resolved.find('%s')
+        idx_f = resolved.find('%f')
+        if idx_s >= 0 and (idx_f < 0 or idx_s < idx_f):
+            resolved = resolved.replace('%s', val.strip("'"), 1)
+        elif idx_f >= 0:
+            resolved = resolved.replace('%f', val, 1)
+    return resolved
+
+
+def _resolve_using_params(resolved, using_str, declares):
+    """Replace @param references from a USING clause.
+
+    If the variable has a DECLARE default, substitute the literal value.
+    If not (runtime variable like target_aoi), strip the @ prefix so it
+    works as a plain script variable reference.
+    """
+    if not using_str:
+        return resolved
+    for pair in using_str.split(','):
+        pair = pair.strip()
+        parts = re.split(r'\s+AS\s+', pair, flags=re.IGNORECASE)
+        if len(parts) == 2:
+            var_name = parts[0].strip()
+            alias = parts[1].strip().rstrip(';')
+            if var_name in declares:
+                resolved = resolved.replace(f'@{alias}', declares[var_name])
+            else:
+                resolved = resolved.replace(f'@{alias}', alias)
+    return resolved
+
+
+def _flatten_unnest(sql):
+    """Convert IN UNNEST([...]) to flat IN (...) for partition pruning.
+
+    BigQuery only prunes partitions on flat IN with literal values,
+    not on IN UNNEST(array).
+    """
+    return re.sub(r'IN\s+UNNEST\(\[([^\]]+)\]\)', r'IN (\1)', sql)
+
+
+# Regex to match EXECUTE IMMEDIATE FORMAT blocks (with optional INTO and USING)
+_FORMAT_BLOCK_RE = re.compile(
+    r'EXECUTE\s+IMMEDIATE\s+FORMAT\s*\(\s*"""'
+    r'(.*?)'                                     # group 1: template body
+    r'"""\s*,\s*'
+    r'(.*?)'                                     # group 2: format args
+    r'\)\s*'
+    r'(?:INTO\s+(\w+)\s*)?'                      # group 3: optional INTO var_name
+    r'(?:USING\s+(.*?)\s*)?'                     # group 4: optional USING clause
+    r';',
+    re.DOTALL
+)
+
+
 def resolve_format(sql):
     """Resolve EXECUTE IMMEDIATE FORMAT(...) into plain SQL.
 
-    Replaces FORMAT %s/%f placeholders with DECLARE values, resolves
-    @param references from USING clauses, and strips the EXECUTE IMMEDIATE
-    wrapper. Returns plain SQL pasteable into BigQuery Console.
+    Handles multiple FORMAT blocks per file (e.g., step 01 has SET + CTAS).
+    Returns plain SQL pasteable into BigQuery Console.
     """
     declares = extract_declares(sql)
-
-    # Pattern to match: EXECUTE IMMEDIATE FORMAT(""" ... """, args) [INTO var] [USING ...];
-    # Handle multiple EXECUTE IMMEDIATE blocks in one file
-    block_re = re.compile(
-        r'EXECUTE\s+IMMEDIATE\s+FORMAT\s*\(\s*"""'  # EXECUTE IMMEDIATE FORMAT("""
-        r'(.*?)'                                     # group 1: template body
-        r'"""\s*,\s*'                                # """,
-        r'(.*?)'                                     # group 2: format args
-        r'\)\s*'                                     # )
-        r'(?:INTO\s+(\w+)\s*)?'                      # group 3: optional INTO var_name
-        r'(?:USING\s+(.*?)\s*)?'                     # group 4: optional USING clause
-        r';',                                        # ;
-        re.DOTALL
-    )
-
-    # Find runtime DECLARE lines (no DEFAULT) — these are preserved in output
-    runtime_declare_re = re.compile(
-        r'^(DECLARE\s+\w+\s+\S+\s*;)\s*$',
-        re.MULTILINE
-    )
-    runtime_declares = runtime_declare_re.findall(sql)
+    runtime_declares = _find_runtime_declares(sql)
 
     resolved_blocks = []
+    for m in _FORMAT_BLOCK_RE.finditer(sql):
+        args = [a.strip() for a in m.group(2).split(',') if a.strip()]
+        resolved = _resolve_placeholders(m.group(1), args, declares)
+        resolved = _resolve_using_params(resolved, m.group(4), declares)
+        resolved = _flatten_unnest(resolved)
 
-    for m in block_re.finditer(sql):
-        template = m.group(1)
-        args_str = m.group(2)
-        into_var = m.group(3)
-        using_str = m.group(4)
-
-        # Parse FORMAT arguments (comma-separated variable names)
-        args = [a.strip() for a in args_str.split(',') if a.strip()]
-
-        # Resolve FORMAT placeholders (%s, %f) with DECLARE values
-        resolved = template
-        for arg in args:
-            if arg not in declares:
-                continue
-            val = declares[arg]
-            # Find the next placeholder (%s or %f)
-            idx_s = resolved.find('%s')
-            idx_f = resolved.find('%f')
-            if idx_s >= 0 and (idx_f < 0 or idx_s < idx_f):
-                # Next placeholder is %s — strip quotes for identifiers
-                resolved = resolved.replace('%s', val.strip("'"), 1)
-            elif idx_f >= 0:
-                # Next placeholder is %f — use value as-is (numeric)
-                resolved = resolved.replace('%f', val, 1)
-
-        # Resolve @param references from USING clause
-        if using_str:
-            # Parse "var AS alias, var2 AS alias2"
-            for pair in using_str.split(','):
-                pair = pair.strip()
-                parts = re.split(r'\s+AS\s+', pair, flags=re.IGNORECASE)
-                if len(parts) == 2:
-                    var_name = parts[0].strip()
-                    alias = parts[1].strip().rstrip(';')
-                    if var_name in declares:
-                        resolved = resolved.replace(f'@{alias}', declares[var_name])
-                    else:
-                        # Runtime variable (e.g., target_aoi from SET) —
-                        # strip @ prefix for plain script reference
-                        resolved = resolved.replace(f'@{alias}', alias)
-
-        # Convert IN UNNEST([...]) to flat IN (...) for partition pruning
-        # BigQuery only prunes partitions on flat IN with literal values
-        resolved = re.sub(
-            r'IN\s+UNNEST\(\[([^\]]+)\]\)',
-            r'IN (\1)',
-            resolved
-        )
-
-        # Handle INTO pattern: produce SET statement
-        if into_var:
-            block = f"SET {into_var} = (\n{resolved.strip()}\n);"
+        if m.group(3):  # INTO var_name — produce SET statement
+            resolved_blocks.append(f"SET {m.group(3)} = (\n{resolved.strip()}\n);")
         else:
             block = resolved.strip()
             if not block.endswith(';'):
                 block += ';'
-        resolved_blocks.append(block)
+            resolved_blocks.append(block)
 
     if not resolved_blocks:
-        # No FORMAT blocks found — return SQL with just DECLARE lines stripped
+        # No FORMAT blocks — return SQL with DECLARE lines stripped
         return re.sub(r'^DECLARE\s+.*?;\s*\n', '', sql, flags=re.MULTILINE).strip()
 
     # Prepend runtime DECLARE lines (no DEFAULT) before resolved blocks
-    parts = runtime_declares + resolved_blocks
-    return '\n\n'.join(parts)
+    return '\n\n'.join(runtime_declares + resolved_blocks)
 
 
 def discover_sql_files(phase):

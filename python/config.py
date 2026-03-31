@@ -29,6 +29,14 @@ EVENT_GAP_MINUTES = os.getenv("EVENT_GAP_MINUTES", "60")
 # QC
 MIN_SAMPLES_PER_BLOCK = os.getenv("MIN_SAMPLES_PER_BLOCK", "8")
 
+# Hail detection
+HAIL_TEMP_THRESHOLD = os.getenv("HAIL_TEMP_THRESHOLD", "0.0")
+HAIL_PRECIP_THRESHOLD = os.getenv("HAIL_PRECIP_THRESHOLD", "2.0")
+
+# Daily plan consistency
+WIND_CONSISTENCY_MIN = os.getenv("WIND_CONSISTENCY_MIN", "2")
+HAIL_CONSISTENCY_MIN = os.getenv("HAIL_CONSISTENCY_MIN", "1")
+
 def validate_config(is_setup=False):
     """Validates that all required configuration variables are present."""
     missing = []
@@ -50,10 +58,12 @@ def validate_config(is_setup=False):
     if missing:
         raise ValueError(f"Missing required environment variables in config/.env: {', '.join(missing)}")
 
+
 def get_sql_init_hours_array() -> str:
     """Converts comma-separated init hours to SQL INT64 array."""
     hours = [h.strip() for h in INIT_HOURS.split(',')]
     return f"[{', '.join(hours)}]"
+
 
 def get_sql_init_timestamps() -> str:
     """Generate explicit init_time timestamps for partition pruning.
@@ -83,6 +93,7 @@ def get_sql_init_timestamps() -> str:
 
     return f"[{', '.join(timestamps)}]"
 
+
 def get_sql_fips_array() -> str:
     """Converts the comma-separated fips codes into a string representation of a SQL array."""
     if not COUNTY_FIPS:
@@ -91,6 +102,7 @@ def get_sql_fips_array() -> str:
     fips_formatted = ", ".join([f"'{f}'" for f in fips_list])
     return f"[{fips_formatted}]"
 
+
 def get_sql_fips_tuple() -> str:
     """Converts comma-separated fips codes to SQL tuple: ('01051', '01101')."""
     if not COUNTY_FIPS:
@@ -98,6 +110,7 @@ def get_sql_fips_tuple() -> str:
     fips_list = [f.strip() for f in COUNTY_FIPS.split(',')]
     fips_formatted = ", ".join([f"'{f}'" for f in fips_list])
     return f"({fips_formatted})"
+
 
 def get_sql_lead_hours_array() -> str:
     """Converts comma-separated lead hours to SQL INT64 array: [24, 30, 36, 42, 48]."""

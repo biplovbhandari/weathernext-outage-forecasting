@@ -15,7 +15,11 @@ DECLARE gcp_project  STRING DEFAULT 'YOUR_GCP_PROJECT';
 DECLARE dataset_name STRING DEFAULT 'weathernext_demo';
 DECLARE start_ts     TIMESTAMP DEFAULT TIMESTAMP('2024-05-06 00:00:00');
 DECLARE end_ts       TIMESTAMP DEFAULT TIMESTAMP('2024-05-15 00:00:00');
-DECLARE lead_hours_arr ARRAY<INT64> DEFAULT [24, 30, 36, 42, 48];
+DECLARE lead_hours_arr  ARRAY<INT64> DEFAULT [24, 30, 36, 42, 48];
+DECLARE hail_temp_thr   FLOAT64      DEFAULT 0.0;
+DECLARE hail_precip_thr FLOAT64      DEFAULT 2.0;
+DECLARE wind_consist_min INT64       DEFAULT 2;
+DECLARE hail_consist_min INT64       DEFAULT 1;
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE VIEW `%s.%s.view_daily_plan` AS
@@ -37,8 +41,8 @@ EXECUTE IMMEDIATE FORMAT("""
       ) AS wind_flags_leads,
 
       COUNTIF(
-        w.t700_c_min <= 0.0
-        AND w.tp6_mm_max >= 2.0
+        w.t700_c_min <= @hail_temp_thr
+        AND w.tp6_mm_max >= @hail_precip_thr
       ) AS hail_flags_leads
 
     FROM `%s.%s.graph_multi_ingredients_hourly` w
@@ -64,8 +68,8 @@ EXECUTE IMMEDIATE FORMAT("""
     dly.county_fips,
     dly.day_utc,
     CASE
-      WHEN (dly.ws10_daymax >= p.p90_ws10 AND dly.wind_consistency >= 2)
-        OR dly.hail_consistency >= 1
+      WHEN (dly.ws10_daymax >= p.p90_ws10 AND dly.wind_consistency >= @wind_consist_min)
+        OR dly.hail_consistency >= @hail_consist_min
       THEN 'HIGH'
       WHEN dly.ws10_daymax >= p.p90_ws10
       THEN 'MEDIUM'
@@ -79,9 +83,9 @@ EXECUTE IMMEDIATE FORMAT("""
         SELECT r
         FROM UNNEST([
           IF(dly.ws10_daymax >= p.p90_ws10, 'wind>=county p90', NULL),
-          IF(dly.ws10_daymax >= p.p90_ws10 AND dly.wind_consistency >= 2,
+          IF(dly.ws10_daymax >= p.p90_ws10 AND dly.wind_consistency >= @wind_consist_min,
              'multi-lead-confirmed', NULL),
-          IF(dly.hail_consistency >= 1, 'hail-ingredients', NULL)
+          IF(dly.hail_consistency >= @hail_consist_min, 'hail-ingredients', NULL)
         ]) AS r
         WHERE r IS NOT NULL
       ),
@@ -98,4 +102,8 @@ EXECUTE IMMEDIATE FORMAT("""
 USING
   lead_hours_arr AS lead_hours_arr,
   start_ts AS start_ts,
-  end_ts AS end_ts;
+  end_ts AS end_ts,
+  hail_temp_thr AS hail_temp_thr,
+  hail_precip_thr AS hail_precip_thr,
+  wind_consist_min AS wind_consist_min,
+  hail_consist_min AS hail_consist_min;

@@ -13,8 +13,10 @@
 
 DECLARE gcp_project  STRING DEFAULT 'YOUR_GCP_PROJECT';
 DECLARE dataset_name STRING DEFAULT 'weathernext_demo';
-DECLARE start_ts     TIMESTAMP DEFAULT TIMESTAMP('2024-05-06 00:00:00');
-DECLARE end_ts       TIMESTAMP DEFAULT TIMESTAMP('2024-05-15 00:00:00');
+DECLARE start_ts        TIMESTAMP DEFAULT TIMESTAMP('2024-05-06 00:00:00');
+DECLARE end_ts          TIMESTAMP DEFAULT TIMESTAMP('2024-05-15 00:00:00');
+DECLARE hail_temp_thr   FLOAT64   DEFAULT 0.0;
+DECLARE hail_precip_thr FLOAT64   DEFAULT 2.0;
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE TABLE `%s.%s.event_coverage_wx` AS
@@ -84,11 +86,11 @@ EXECUTE IMMEDIATE FORMAT("""
         w.shear_0_6km_max_mps >= p.p90_shear
       ), 1, 0)) AS wind48,
 
-      MAX(IF(w.lead_hours = 24 AND (w.t700_c_min <= 0.0 AND w.tp6_mm_max >= 2.0), 1, 0)) AS hail24,
-      MAX(IF(w.lead_hours = 30 AND (w.t700_c_min <= 0.0 AND w.tp6_mm_max >= 2.0), 1, 0)) AS hail30,
-      MAX(IF(w.lead_hours = 36 AND (w.t700_c_min <= 0.0 AND w.tp6_mm_max >= 2.0), 1, 0)) AS hail36,
-      MAX(IF(w.lead_hours = 42 AND (w.t700_c_min <= 0.0 AND w.tp6_mm_max >= 2.0), 1, 0)) AS hail42,
-      MAX(IF(w.lead_hours = 48 AND (w.t700_c_min <= 0.0 AND w.tp6_mm_max >= 2.0), 1, 0)) AS hail48,
+      MAX(IF(w.lead_hours = 24 AND (w.t700_c_min <= @hail_temp_thr AND w.tp6_mm_max >= @hail_precip_thr), 1, 0)) AS hail24,
+      MAX(IF(w.lead_hours = 30 AND (w.t700_c_min <= @hail_temp_thr AND w.tp6_mm_max >= @hail_precip_thr), 1, 0)) AS hail30,
+      MAX(IF(w.lead_hours = 36 AND (w.t700_c_min <= @hail_temp_thr AND w.tp6_mm_max >= @hail_precip_thr), 1, 0)) AS hail36,
+      MAX(IF(w.lead_hours = 42 AND (w.t700_c_min <= @hail_temp_thr AND w.tp6_mm_max >= @hail_precip_thr), 1, 0)) AS hail42,
+      MAX(IF(w.lead_hours = 48 AND (w.t700_c_min <= @hail_temp_thr AND w.tp6_mm_max >= @hail_precip_thr), 1, 0)) AS hail48,
 
       MIN(
         IF(
@@ -96,7 +98,7 @@ EXECUTE IMMEDIATE FORMAT("""
            OR w.ws925_max_mps >= p.p90_ws925
            OR w.shear_0_6km_max_mps >= p.p90_shear)
           OR
-          (w.t700_c_min <= 0.0 AND w.tp6_mm_max >= 2.0),
+          (w.t700_c_min <= @hail_temp_thr AND w.tp6_mm_max >= @hail_precip_thr),
           w.lead_hours,
           NULL
         )
@@ -151,4 +153,6 @@ EXECUTE IMMEDIATE FORMAT("""
 )
 USING
   start_ts AS start_ts,
-  end_ts AS end_ts;
+  end_ts AS end_ts,
+  hail_temp_thr AS hail_temp_thr,
+  hail_precip_thr AS hail_precip_thr;
