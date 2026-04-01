@@ -4,6 +4,8 @@
 
 This project correlates [WeatherNext](https://deepmind.google/discover/blog/graphcast-ai-model-for-faster-and-more-accurate-global-weather-forecasting/) AI weather forecasts with [EAGLE-I](https://eagle-i.doe.gov/) power outage data on Google Cloud BigQuery to help electric utilities pre-position repair crews ahead of severe weather events. EAGLE-I can be downloaded from [here](https://figshare.com/s/417a4f147cf1357a5391?file=53581661). We are using 2024 for this repo.
 
+**[Full Documentation](https://biplovbhandari.github.io/weathernext-outage-forecasting/)** | [Architecture](docs/architecture.md) | [Concepts](docs/concepts.md) | [Cost Estimates](docs/cost-estimates.md)
+
 ---
 
 ## The Problem
@@ -181,7 +183,6 @@ python python/pipeline.py --resume               # Resume after failure (skip co
 ```
 weathernext-outage-forecasting/
 ├── README.md
-├── CONTRIBUTING.md
 ├── LICENSE
 ├── config/
 │   └── .env.example                              # Environment variable template
@@ -213,6 +214,15 @@ weathernext-outage-forecasting/
 │       └── 03_bqml_evaluate.sql
 ├── looker/
 │   └── dashboard-views.sql                       # Looker Studio-optimized views
+├── docs/                                          # Project documentation (hosted on GitHub Pages)
+│   ├── index.md                                   # Docs landing page
+│   ├── architecture.md                            # System design + config reference
+│   ├── concepts.md                                # Weather variables, thresholds, ML approach
+│   ├── data-sources.md                            # EAGLE-I, WeatherNext, county boundaries
+│   ├── cost-estimates.md                          # BigQuery pricing + optimization
+│   ├── looker-studio-guide.md                     # Dashboard setup
+│   └── vertex-ai-guide.md                         # Advanced: Vertex AI AutoML alternative
+└── mkdocs.yml                                     # MkDocs Material site configuration
 ```
 
 ## Key Concepts
@@ -284,7 +294,7 @@ The Alabama demo (May 2024) demonstrates:
 
 Dashboard outputs are designed for Looker Studio -- see [docs/looker-studio-guide.md](docs/looker-studio-guide.md) for setup.
 
-## Contributing
+<!-- ## Contributing
 
 Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
@@ -294,7 +304,7 @@ Ideas for contributions:
 - Alternative visualization (Streamlit, Dash, or Superset dashboards)
 - Additional outage data sources beyond EAGLE-I
 - Automation with Cloud Scheduler for daily operational runs
-- Regional calibration with tuned thresholds for different climate zones
+- Regional calibration with tuned thresholds for different climate zones -->
 
 ## License
 

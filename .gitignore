@@ -34,5 +34,7 @@ Thumbs.db
 
 venv/
 dev/
-docs/
 CONTRIBUTING.md
+
+# MkDocs build output
+site/

@@ -1,0 +1,45 @@
+site_name: WeatherNext Outage Forecasting
+site_description: Predict power outages using Google DeepMind's WeatherNext AI forecasts and EAGLE-I outage data
+repo_url: https://github.com/biplovbhandari/weathernext-outage-forecasting
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue grey
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue grey
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Concepts: concepts.md
+  - Data Sources: data-sources.md
+  - Cost Estimates: cost-estimates.md
+  - Looker Studio: looker-studio-guide.md
+  - Vertex AI (Advanced): vertex-ai-guide.md
+
+markdown_extensions:
+  - tables
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
