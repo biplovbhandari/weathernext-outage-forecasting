@@ -29,6 +29,13 @@ SQL_BASE = os.path.join(os.path.dirname(__file__), '..', 'sql')
 # Phases run in this order when --phase all is used
 PHASE_ORDER = ['correlation', 'ml']
 
+# ML sub-phases map to (directory, file_prefix_glob)
+ML_SUB_PHASES = {
+    'ml-data':  ('ml', '01_*'),
+    'ml-train': ('ml', '02_*'),
+    'ml-eval':  ('ml', '03_*'),
+}
+
 # Regex to match DECLARE lines by variable name
 DECLARE_RE = re.compile(
     r"^(DECLARE\s+(\w+)\s+\S+\s+DEFAULT\s+)"  # DECLARE name type DEFAULT
@@ -59,6 +66,11 @@ def build_replacement_map():
         'hail_precip_thr': config.HAIL_PRECIP_THRESHOLD,
         'wind_consist_min': config.WIND_CONSISTENCY_MIN,
         'hail_consist_min': config.HAIL_CONSISTENCY_MIN,
+        'ml_max_iter':     config.ML_MAX_ITERATIONS,
+        'ml_learn_rate':   config.ML_LEARN_RATE,
+        'ml_child_weight': config.ML_MIN_TREE_CHILD_WEIGHT,
+        'ml_subsample':    config.ML_SUBSAMPLE,
+        'ml_budget_hrs':   config.ML_BUDGET_HOURS,
     }
 
     return replacements
@@ -139,7 +151,7 @@ def _flatten_unnest(sql):
     BigQuery only prunes partitions on flat IN with literal values,
     not on IN UNNEST(array).
     """
-    return re.sub(r'IN\s+UNNEST\(\[([^\]]+)\]\)', r'IN (\1)', sql)
+    return re.sub(r'\bIN\s+UNNEST\(\[([^\]]+)\]\)', r'IN (\1)', sql)
 
 
 # Regex to match EXECUTE IMMEDIATE FORMAT blocks (with optional INTO and USING)
@@ -188,16 +200,22 @@ def resolve_format(sql):
     return '\n\n'.join(runtime_declares + resolved_blocks)
 
 
-def discover_sql_files(phase):
-    """Discover SQL files for a phase, sorted by filename prefix number."""
+def discover_sql_files(phase, file_filter=None):
+    """Discover SQL files for a phase, sorted by filename prefix number.
+
+    Args:
+        phase: Directory name under sql/ (e.g., 'correlation', 'ml')
+        file_filter: Optional glob pattern to filter files (e.g., '02_*')
+    """
     phase_dir = os.path.join(SQL_BASE, phase)
     if not os.path.isdir(phase_dir):
         print(f"Error: Phase directory not found: {phase_dir}")
         sys.exit(1)
 
-    files = sorted(glob.glob(os.path.join(phase_dir, '*.sql')))
+    pattern = file_filter + '.sql' if file_filter else '*.sql'
+    files = sorted(glob.glob(os.path.join(phase_dir, pattern)))
     if not files:
-        print(f"Error: No SQL files found in {phase_dir}")
+        print(f"Error: No SQL files found in {phase_dir}/{pattern}")
         sys.exit(1)
 
     return files
@@ -264,7 +282,9 @@ def execute_step(client, phase, filename, sql, dry_run, verbose, resume=False):
             print(f"\n  [DRY RUN] {obj_type} ({target_name}) -- $0 to create")
         elif obj_type == 'SCHEMA':
             print(f"\n  [DRY RUN] {obj_type} ({target_name}) -- $0 to create")
-        elif obj_type in ('TABLE', 'MODEL'):
+        elif obj_type == 'MODEL':
+            print(f"\n  [DRY RUN] {obj_type} ({target_name}) -- training may take minutes; consider running via BQ Console for visibility")
+        elif obj_type == 'TABLE':
             print(f"\n  [DRY RUN] {obj_type} ({target_name}) -- paste SELECT into BQ Console to check cost")
         else:
             print(f"\n  [DRY RUN] Skipped execution")
@@ -273,9 +293,20 @@ def execute_step(client, phase, filename, sql, dry_run, verbose, resume=False):
     start_time = time.time()
     try:
         job = client.query(resolved_sql)
-        job.result()
-        elapsed = time.time() - start_time
+        obj_type = _detect_object_type(resolved_sql)
 
+        if obj_type == 'MODEL':
+            # MODEL training can take minutes — poll with progress updates
+            print(f"  Training model (this may take several minutes)...")
+            while not job.done():
+                elapsed = time.time() - start_time
+                print(f"  ... {elapsed:.0f}s elapsed", flush=True)
+                time.sleep(10)
+            job.result()  # raise if failed
+        else:
+            job.result()
+
+        elapsed = time.time() - start_time
         bytes_processed = job.total_bytes_processed or 0
         gb_processed = bytes_processed / (1024**3)
         print(f"  OK ({elapsed:.1f}s, {gb_processed:.3f} GB processed)")
@@ -314,20 +345,26 @@ def parse_args():
         epilog=(
             "Phases:\n"
             "  correlation  Weather extraction, join, risk scoring, preboard\n"
-            "  ml           ML training data, model creation, evaluation\n"
+            "  ml           ML training data, model creation, evaluation (all 3)\n"
+            "  ml-data      ML step 1 only: prepare training data\n"
+            "  ml-train     ML step 2 only: train model (may take minutes)\n"
+            "  ml-eval      ML step 3 only: evaluate + predictions\n"
             "  all          Run correlation then ml (default)\n"
             "\n"
             "Examples:\n"
             "  python pipeline.py                        # Run all phases\n"
             "  python pipeline.py --phase correlation    # Correlation only\n"
-            "  python pipeline.py --phase ml             # ML only\n"
+            "  python pipeline.py --phase ml             # All ML steps\n"
+            "  python pipeline.py --phase ml-train       # Train model only\n"
+            "  python pipeline.py --phase ml-eval        # Evaluate only (model must exist)\n"
             "  python pipeline.py --dry-run              # Print resolved SQL (pasteable into BQ Console)\n"
             "  python pipeline.py --resume               # Skip completed steps\n"
         )
     )
     parser.add_argument('--dry-run', action='store_true',
         help='Print resolved plain SQL without executing (pasteable into BigQuery Console)')
-    parser.add_argument('--phase', choices=['correlation', 'ml', 'all'],
+    parser.add_argument('--phase',
+        choices=['correlation', 'ml', 'ml-data', 'ml-train', 'ml-eval', 'all'],
         default='all',
         help='Pipeline phase to run (default: all)')
     parser.add_argument('--verbose', '-v', action='store_true',
@@ -341,11 +378,14 @@ def main():
     args = parse_args()
     config.validate_config()
 
-    # Determine which phases to run
-    if args.phase == 'all':
-        phases = PHASE_ORDER
+    # Determine which phases to run: list of (dir_name, file_filter) tuples
+    if args.phase in ML_SUB_PHASES:
+        dir_name, file_filter = ML_SUB_PHASES[args.phase]
+        phase_list = [(dir_name, file_filter)]
+    elif args.phase == 'all':
+        phase_list = [(p, None) for p in PHASE_ORDER]
     else:
-        phases = [args.phase]
+        phase_list = [(args.phase, None)]
 
     replacements = build_replacement_map()
 
@@ -356,7 +396,7 @@ def main():
     print(f"  Window:   {config.START_DATE} to {config.END_DATE}")
     print(f"  Leads:    {config.LEAD_HOURS}")
     print(f"  Init hrs: {config.INIT_HOURS} (UTC)")
-    print(f"  Phases:   {', '.join(phases)}")
+    print(f"  Phases:   {args.phase}")
     if args.dry_run:
         print(f"  Mode:     DRY RUN")
     if args.resume:
@@ -374,9 +414,9 @@ def main():
 
     # Execute phases in order
     results = []
-    for phase in phases:
-        print(f"\n--- Phase: {phase} ---")
-        sql_files = discover_sql_files(phase)
+    for phase, file_filter in phase_list:
+        print(f"\n--- Phase: {phase}{f' ({file_filter})' if file_filter else ''} ---")
+        sql_files = discover_sql_files(phase, file_filter)
 
         for filepath in sql_files:
             filename = os.path.basename(filepath)

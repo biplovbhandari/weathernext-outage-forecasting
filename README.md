@@ -115,7 +115,7 @@ python python/pipeline.py --phase ml
 | --------------- | ------------------ | ----- | ---------------------------------------------------------------------------- |
 | **setup**       | `sql/setup/`       | 4     | Dataset creation, EAGLE-I load, county reference (run by `setup.py`)         |
 | **correlation** | `sql/correlation/` | 10    | Weather extraction, 6h QC, events, thresholds, risk scoring, lead evaluation |
-| **ml**          | `sql/ml/`          | 3     | BQML training data, model training (boosted tree), evaluation & predictions  |
+| **ml**          | `sql/ml/`          | 3     | BQML training data, regressor model training, evaluation & threshold sweep   |
 
 
 ### Correlation Steps Detail
@@ -135,11 +135,26 @@ python python/pipeline.py --phase ml
 | 10   | `10_correlations.sql`              | TABLE | `correlations`                   | Pearson correlation per county per lead                             |
 
 
+### ML Steps Detail
+
+
+| Step | File                        | Type  | Creates                    | Purpose                                                      |
+| ---- | --------------------------- | ----- | -------------------------- | ------------------------------------------------------------ |
+| 01   | `01_bqml_training_data.sql` | TABLE | `bqml_training_data`       | Build features + labels from 6h master view                  |
+| 02   | `02_bqml_create_model.sql`  | MODEL | `outage_predictor_regressor` | Train boosted tree regressor (predicts outage ratio 0.0–1.0) |
+| 03   | `03_bqml_evaluate.sql`      | TABLE | `bqml_evaluation`, `bqml_feature_importance`, `bqml_predictions`, `bqml_threshold_sweep` | Evaluate model, feature importance, predictions, precision/recall at multiple thresholds |
+
+> **Note:** Model training (step 02) may take several minutes. Use `--phase ml-train` to run it independently, or paste into BQ Console for progress visibility.
+
+
 ### CLI Options
 
 ```bash
 python python/pipeline.py --phase correlation    # Correlation only
-python python/pipeline.py --phase ml             # ML only
+python python/pipeline.py --phase ml             # All ML steps
+python python/pipeline.py --phase ml-data        # ML step 1 only: prepare training data
+python python/pipeline.py --phase ml-train       # ML step 2 only: train model (may take minutes)
+python python/pipeline.py --phase ml-eval        # ML step 3 only: evaluate + predictions
 python python/pipeline.py --phase all            # Both (correlation + ml)
 python python/pipeline.py --dry-run              # Print resolved SQL (paste into BQ Console for cost check)
 python python/pipeline.py --resume               # Resume after failure (skip completed steps)
