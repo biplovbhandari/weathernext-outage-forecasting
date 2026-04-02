@@ -5,9 +5,9 @@
 -- All subsequent SQL files reference the same variable names.
 -- ============================================================================
 
--- ┌─────────────────────────────────────────────────────────┐
--- │  CONFIGURATION — Edit these for your environment        │
--- └─────────────────────────────────────────────────────────┘
+-- ============================================================================
+--  CONFIGURATION — Edit these for your environment
+-- ============================================================================
 DECLARE gcp_project   STRING DEFAULT 'YOUR_GCP_PROJECT';
 DECLARE dataset_name  STRING DEFAULT 'weathernext_demo';
 

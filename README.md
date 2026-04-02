@@ -2,7 +2,7 @@
 
 **Predict power outages 24-48 hours in advance using Google DeepMind's WeatherNext AI weather forecasts.**
 
-This project correlates [WeatherNext](https://deepmind.google/discover/blog/graphcast-ai-model-for-faster-and-more-accurate-global-weather-forecasting/) AI weather forecasts with [EAGLE-I](https://eagle-i.doe.gov/) power outage data on Google Cloud BigQuery to help electric utilities pre-position repair crews ahead of severe weather events. EAGLE-I can be downloaded from [here](https://figshare.com/s/417a4f147cf1357a5391?file=53581661). We are using 2024 for this repo.
+This project correlates [WeatherNext](https://deepmind.google/discover/blog/graphcast-ai-model-for-faster-and-more-accurate-global-weather-forecasting/) AI weather forecasts with [EAGLE-I](https://eagle-i.doe.gov/) power outage data on Google Cloud BigQuery to help electric utilities pre-position repair crews ahead of severe weather events.
 
 **[Full Documentation](https://biplovbhandari.github.io/weathernext-outage-forecasting/)** | [Architecture](docs/architecture.md) | [Concepts](docs/concepts.md) | [Cost Estimates](docs/cost-estimates.md)
 
@@ -14,7 +14,7 @@ Electric utilities mobilize repair crews *after* storms cause outages, leading t
 
 ## The Solution
 
-WeatherNext (Google DeepMind's AI weather model) provides high-resolution, 10-day forecasts accessible directly in BigQuery. By joining these forecasts with historical outage data, we can:
+WeatherNext provides high-resolution, 10-day forecasts accessible directly in BigQuery. By joining these forecasts with historical outage data, we can:
 
 1. **Extract** multi-ingredient weather features (wind, shear, hail proxy, precipitation) at multiple lead times
 2. **Detect** outage events and evaluate which forecasts detected them
@@ -54,7 +54,7 @@ graph TD
     end
 
     subgraph Output
-        L --> R["Looker Studio<br/>Dashboard"]
+        L --> R["Looker Studio /<br/>any BI tool"]
         K --> R
         M --> R
         N --> R
@@ -75,7 +75,7 @@ graph TD
 
 - Google Cloud project with BigQuery enabled
 - [WeatherNext Graph](https://console.cloud.google.com/bigquery/analytics-hub) subscription via Analytics Hub
-- EAGLE-I outage data CSV (download from [eagle-i.doe.gov](https://eagle-i.doe.gov/))
+- EAGLE-I can be downloaded from [here](https://figshare.com/s/417a4f147cf1357a5391?file=53581661).
 - `gcloud` CLI installed and authenticated
 - Python 3.9+ with `pip install -r python/requirements.txt`
 
@@ -91,7 +91,7 @@ pip install -r python/requirements.txt
 
 # 3. Configure your environment
 cp config/.env.example config/.env
-# Edit config/.env with your GCP project, dataset, counties, dates
+# Edit config/.env with your GCP project, dataset, counties, dates, thresholds etc
 
 # 4. Authenticate with GCP
 gcloud auth application-default login
@@ -178,53 +178,6 @@ python python/pipeline.py --resume               # Resume after failure (skip co
 - **Correlations** -- Pearson r between each weather feature and outage severity
 - **ML predictions** -- Outage probability scored by BQML boosted tree classifier
 
-## Project Structure
-
-```
-weathernext-outage-forecasting/
-├── README.md
-├── LICENSE
-├── config/
-│   └── .env.example                              # Environment variable template
-├── python/
-│   ├── requirements.txt                          # Python dependencies
-│   ├── config.py                                 # Configuration from .env
-│   ├── setup.py                                  # One-time setup (GCS upload + base tables)
-│   └── pipeline.py                               # SQL pipeline orchestrator
-├── sql/
-│   ├── setup/                                    # Base tables (run by setup.py)
-│   │   ├── 01_setup_dataset.sql
-│   │   ├── 02_create_eaglei_raw.sql
-│   │   ├── 03_create_eaglei_partitioned.sql
-│   │   └── 04_create_counties_ref.sql
-│   ├── correlation/                              # Weather + outage analysis (10 steps)
-│   │   ├── 01_extract_multi_ingredients.sql      # TABLE: WeatherNext extraction
-│   │   ├── 02_view_eaglei_6h_qc.sql             # VIEW: 6h outage blocks with QC
-│   │   ├── 03_view_six_hour_grid.sql             # VIEW: county x time scaffold
-│   │   ├── 04_view_windhail_thresholds.sql       # VIEW: p90/p80 thresholds
-│   │   ├── 05_view_outage_vs_wx_6h_qc.sql       # VIEW: master join
-│   │   ├── 06_events_restoration.sql             # TABLE: outage event detection
-│   │   ├── 07_event_coverage_wx.sql              # TABLE: event forecast coverage
-│   │   ├── 08_view_daily_plan.sql                # VIEW: daily risk tiers
-│   │   ├── 09_lead_performance.sql               # TABLE: precision/recall/F1
-│   │   └── 10_correlations.sql                   # TABLE: feature correlations
-│   └── ml/                                       # ML training + evaluation
-│       ├── 01_bqml_training_data.sql
-│       ├── 02_bqml_create_model.sql
-│       └── 03_bqml_evaluate.sql
-├── looker/
-│   └── dashboard-views.sql                       # Looker Studio-optimized views
-├── docs/                                          # Project documentation (hosted on GitHub Pages)
-│   ├── index.md                                   # Docs landing page
-│   ├── architecture.md                            # System design + config reference
-│   ├── concepts.md                                # Weather variables, thresholds, ML approach
-│   ├── data-sources.md                            # EAGLE-I, WeatherNext, county boundaries
-│   ├── cost-estimates.md                          # BigQuery pricing + optimization
-│   ├── looker-studio-guide.md                     # Dashboard setup
-│   └── vertex-ai-guide.md                         # Advanced: Vertex AI AutoML alternative
-└── mkdocs.yml                                     # MkDocs Material site configuration
-```
-
 ## Key Concepts
 
 ### WeatherNext Graph
@@ -292,7 +245,7 @@ The Alabama demo (May 2024) demonstrates:
 - **Lead performance** showing precision/recall/F1 by forecast lead (24h vs 48h)
 - **Risk scoring** with data-driven HIGH/MEDIUM/LOW tiers for crew pre-positioning
 
-Dashboard outputs are designed for Looker Studio -- see [docs/looker-studio-guide.md](docs/looker-studio-guide.md) for setup.
+Dashboard outputs are designed for Looker Studio or any BI tool that connects to BigQuery -- see [docs/looker-studio-guide.md](docs/looker-studio-guide.md) for Looker Studio setup.
 
 <!-- ## Contributing
 

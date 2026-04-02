@@ -16,11 +16,4 @@ EXECUTE IMMEDIATE FORMAT("""
   )
 """, gcp_project, dataset_name);
 
--- Load data via bq CLI (run from shell):
--- bq load \
---   --source_format=CSV \
---   --field_delimiter=',' \
---   --skip_leading_rows=1 \
---   --autodetect \
---   ${GCP_PROJECT}:${DATASET_NAME}.eaglei_raw \
---   gs://${GCS_BUCKET}/eaglei_outages_2024.csv
+-- Data loading is handled by setup.py (Step 4: load_table_from_uri)
