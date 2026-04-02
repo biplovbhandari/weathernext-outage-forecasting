@@ -9,7 +9,7 @@ The system operates entirely within Google Cloud Platform, using BigQuery as the
 ### 1. Ingestion Layer
 
 **EAGLE-I Outage Data:**
-CSV files from the US DOE EAGLE-I system are uploaded to Google Cloud Storage, then loaded into BigQuery via `bq load`. The raw data has 15-minute granularity at the county level with fields: `fips_code`, `county`, `state`, `customers_out`, `run_start_time`, `total_customers`
+CSV files from the US DOE EAGLE-I system are uploaded to Google Cloud Storage, then loaded into BigQuery via `setup.py`. The raw data has 15-minute granularity at the county level with fields: `fips_code`, `county`, `state`, `customers_out`, `run_start_time`, `total_customers`
 
 The raw data is transformed into an optimized table (`eaglei_part`) that partitions by date and clusters by county FIPS. This is critical for query cost -- BigQuery only scans the date partitions you need.
 
@@ -23,9 +23,6 @@ US county boundaries come from `bigquery-public-data.geo_us_boundaries`. We mate
 
 ### 2. Processing Layer
 
-**6-Hour Temporal Alignment (steps 02-03):**
-WeatherNext forecasts at 6-hourly resolution. We aggregate EAGLE-I 15-minute data into matching 6-hour blocks (00-06Z, 06-12Z, etc.) with quality control -- blocks with fewer than `MIN_SAMPLES_PER_BLOCK` readings are flagged. A canonical 6-hour grid scaffold ensures balanced LEFT JOINs (zero-outage periods get rows too).
-
 **Multi-Ingredient Weather Extraction (step 01):**
 The most expensive step. Extracts multiple weather features from WeatherNext using cluster pruning (pre-computed AOI with `ST_INTERSECTS`) and partition pruning (explicit `init_time` timestamps). Features extracted per county per 6h block per lead:
 
@@ -36,19 +33,24 @@ The most expensive step. Extracts multiple weather features from WeatherNext usi
 - 700/850 hPa temperature (for hail/icing flags)
 - 6h precipitation
 
+**6-Hour Temporal Alignment (steps 02-03):**
+WeatherNext forecasts at 6-hourly resolution. We aggregate EAGLE-I 15-minute data into matching 6-hour blocks (00-06Z, 06-12Z, etc.) with quality control -- blocks with fewer than `MIN_SAMPLES_PER_BLOCK` readings are flagged. A canonical 6-hour grid scaffold ensures balanced LEFT JOINs (zero-outage periods get rows too).
+
 **Per-County Thresholds (step 04):**
 Instead of manually tuning fixed thresholds, we compute data-driven percentiles from the weather extraction: p90 for wind metrics, p80 for updraft. These are per-county, so a windy coastal county has a higher p90 than a sheltered inland county.
 
 **Master Join (step 05):**
-The base view for all downstream analysis. LEFT JOINs weather, outages, and QC on the 6-hour grid scaffold. Includes a `hail_flag` (t700 <= 0C AND precip >= 2mm).
+The base view for all downstream analysis. LEFT JOINs weather, outages, and QC on the 6-hour grid scaffold. Includes a `hail_flag` (t700 <= 0°C AND precip >= 2mm).
 
 ### 3. Analysis Layer
 
 **Event Detection (step 06):**
-Groups consecutive elevated-outage EAGLE-I readings into discrete events, tolerating gaps of up to `EVENT_GAP_MINUTES`. Output: one row per event with start/end, duration, and peak outage ratio.
+Groups consecutive elevated-outage EAGLE-I readings into discrete events, tolerating gaps of up to `EVENT_GAP_MINUTES`.
+Output: one row per event with start/end, duration, and peak outage ratio.
 
 **Event Coverage (step 07):**
-For each outage event, checks whether weather forecasts at each lead hour (24/30/36/42/48) flagged elevated risk. Outputs detection flags per lead and the earliest lead that detected each event.
+For each outage event, checks whether weather forecasts at each lead hour (24/30/36/42/48) flagged elevated risk.
+Outputs detection flags per lead and the earliest lead that detected each event.
 
 **Daily Risk Plan (step 08):**
 Day-level planning output -- one row per county per day. Tiers:
@@ -67,7 +69,7 @@ Pearson correlation between each weather feature and outage severity, grouped by
 
 ### 4. Output Layer
 
-**Looker Studio Views (5 views):**
+**Looker Studio Views (`--phase looker`, 5 views):**
 
 - `looker_timeseries_6h` -- Time series: outage vs weather features
 - `looker_correlation` -- Heatmap: correlation by county and lead

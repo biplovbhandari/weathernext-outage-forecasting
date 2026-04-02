@@ -7,11 +7,11 @@
 -- See docs/looker-studio-guide.md for setup instructions.
 -- ============================================================================
 
--- ┌─────────────────────────────────────────────────────────┐
--- │  CONFIGURATION                                          │
--- └─────────────────────────────────────────────────────────┘
-DECLARE gcp_project  STRING DEFAULT 'YOUR_GCP_PROJECT';
-DECLARE dataset_name STRING DEFAULT 'weathernext_demo';
+-- ============================================================================
+--  CONFIGURATION (set in config/.env)
+-- ============================================================================
+DECLARE gcp_project  STRING DEFAULT '${GCP_PROJECT}';
+DECLARE dataset_name STRING DEFAULT '${DATASET_NAME}';
 
 
 -- -------------------------------------------------------

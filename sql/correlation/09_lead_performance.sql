@@ -5,19 +5,19 @@
 -- classification. Computes confusion matrix and standard metrics.
 --
 -- x_wind: ws10 >= p90 OR ws925 >= p90 OR shear >= p90
--- x_hail: t700 <= 0C AND precip >= 2mm
+-- x_hail: t700 <= ${HAIL_TEMP_THRESHOLD} AND precip >= ${HAIL_PRECIP_THRESHOLD}
 -- y_outage: outage_ratio_6h_max >= OUTAGE_THRESHOLD
 --
 -- QC: only scores 6h blocks with sufficient EAGLE-I samples.
 -- ============================================================================
 
-DECLARE gcp_project       STRING  DEFAULT 'YOUR_GCP_PROJECT';
-DECLARE dataset_name      STRING  DEFAULT 'weathernext_demo';
-DECLARE outage_threshold  FLOAT64 DEFAULT 0.05;
-DECLARE min_samples       INT64   DEFAULT 8;
-DECLARE lead_hours_arr    ARRAY<INT64> DEFAULT [24, 30, 36, 42, 48];
-DECLARE hail_temp_thr     FLOAT64 DEFAULT 0.0;
-DECLARE hail_precip_thr   FLOAT64 DEFAULT 2.0;
+DECLARE gcp_project       STRING  DEFAULT '${GCP_PROJECT}';
+DECLARE dataset_name      STRING  DEFAULT '${DATASET_NAME}';
+DECLARE outage_threshold  FLOAT64 DEFAULT ${OUTAGE_THRESHOLD};
+DECLARE min_samples       INT64   DEFAULT ${MIN_SAMPLES_PER_BLOCK};
+DECLARE lead_hours_arr    ARRAY<INT64> DEFAULT ${LEAD_HOURS};
+DECLARE hail_temp_thr     FLOAT64 DEFAULT ${HAIL_TEMP_THRESHOLD};
+DECLARE hail_precip_thr   FLOAT64 DEFAULT ${HAIL_PRECIP_THRESHOLD};
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE TABLE `%s.%s.lead_performance` AS

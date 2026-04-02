@@ -6,10 +6,10 @@
 -- ============================================================================
 
 -- ============================================================================
---  CONFIGURATION — Edit these for your environment
+--  CONFIGURATION (set in config/.env)
 -- ============================================================================
-DECLARE gcp_project   STRING DEFAULT 'YOUR_GCP_PROJECT';
-DECLARE dataset_name  STRING DEFAULT 'weathernext_demo';
+DECLARE gcp_project   STRING DEFAULT '${GCP_PROJECT}';
+DECLARE dataset_name  STRING DEFAULT '${DATASET_NAME}';
 
 -- Create dataset in US multi-region (required for public data joins)
 EXECUTE IMMEDIATE FORMAT("""

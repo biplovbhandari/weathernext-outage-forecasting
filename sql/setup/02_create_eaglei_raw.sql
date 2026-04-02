@@ -2,8 +2,8 @@
 -- Step 1: Create raw EAGLE-I outage table (Parameterized)
 -- ============================================================================
 
-DECLARE gcp_project  STRING DEFAULT 'YOUR_GCP_PROJECT';
-DECLARE dataset_name STRING DEFAULT 'weathernext_demo';
+DECLARE gcp_project  STRING DEFAULT '${GCP_PROJECT}';
+DECLARE dataset_name STRING DEFAULT '${DATASET_NAME}';
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE TABLE IF NOT EXISTS `%s.%s.eaglei_raw` (

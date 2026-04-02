@@ -44,6 +44,7 @@ HAIL_PRECIP_THRESHOLD = os.getenv("HAIL_PRECIP_THRESHOLD", "2.0")
 WIND_CONSISTENCY_MIN = os.getenv("WIND_CONSISTENCY_MIN", "2")
 HAIL_CONSISTENCY_MIN = os.getenv("HAIL_CONSISTENCY_MIN", "1")
 
+
 def validate_config(is_setup=False):
     """Validates that all required configuration variables are present."""
     missing = []
@@ -64,12 +65,6 @@ def validate_config(is_setup=False):
 
     if missing:
         raise ValueError(f"Missing required environment variables in config/.env: {', '.join(missing)}")
-
-
-def get_sql_init_hours_array() -> str:
-    """Converts comma-separated init hours to SQL INT64 array."""
-    hours = [h.strip() for h in INIT_HOURS.split(',')]
-    return f"[{', '.join(hours)}]"
 
 
 def get_sql_init_timestamps() -> str:
@@ -108,15 +103,6 @@ def get_sql_fips_array() -> str:
     fips_list = [f.strip() for f in COUNTY_FIPS.split(',')]
     fips_formatted = ", ".join([f"'{f}'" for f in fips_list])
     return f"[{fips_formatted}]"
-
-
-def get_sql_fips_tuple() -> str:
-    """Converts comma-separated fips codes to SQL tuple: ('01051', '01101')."""
-    if not COUNTY_FIPS:
-        return "()"
-    fips_list = [f.strip() for f in COUNTY_FIPS.split(',')]
-    fips_formatted = ", ".join([f"'{f}'" for f in fips_list])
-    return f"({fips_formatted})"
 
 
 def get_sql_lead_hours_array() -> str:

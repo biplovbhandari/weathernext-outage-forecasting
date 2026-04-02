@@ -3,6 +3,7 @@ from google.cloud import bigquery
 from google.cloud import storage
 import config
 
+
 def upload_to_gcs():
     print("=== Step 1: Upload EAGLE-I data to GCS ===")
     storage_client = storage.Client(project=config.GCP_PROJECT)
@@ -140,7 +141,7 @@ def main():
     print("\n=== Setup complete! ===")
     print("Next steps:")
     print("  1. Subscribe to WeatherNext Graph via Analytics Hub")
-    print("  2. Run: python pipeline.py")
+    print("  2. Run: python python/pipeline.py")
 
 
 if __name__ == "__main__":

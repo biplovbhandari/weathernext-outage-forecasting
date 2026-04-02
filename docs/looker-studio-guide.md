@@ -7,7 +7,7 @@ This guide walks through connecting the BigQuery views to Looker Studio and buil
 ## Prerequisites
 
 1. Completed the pipeline setup (`python setup.py` + `python pipeline.py --phase correlation`)
-2. Created Looker-optimized views by running `looker/dashboard-views.sql`
+2. Created Looker-optimized views by running `python pipeline.py --phase looker`
 3. A Google account with access to your BigQuery project
 
 ## Step 1: Create Dashboard

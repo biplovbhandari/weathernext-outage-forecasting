@@ -198,5 +198,3 @@ The **threshold-based** approach (`sql/correlation/`) uses per-county percentile
 | Temperature   | Kelvin                   | Celsius                | `- 273.15`        |
 | Wind speed    | m/s                      | mph (for US audiences) | `x 2.237`         |
 | Wind speed    | m/s                      | knots (for aviation)   | `x 1.944`         |
-
-

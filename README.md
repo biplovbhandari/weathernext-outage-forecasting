@@ -103,6 +103,9 @@ python python/setup.py
 python python/pipeline.py --phase correlation --dry-run
 # Paste the step 01 SQL into BigQuery Console to verify estimated bytes
 
+# You can also do and check the sql file generated for easy reading
+python python/pipeline.py --phase correlation --dry-run -v > /tmp/correlation_dry_run.sql
+
 # 7. Run correlation analysis
 python python/pipeline.py --phase correlation
 
@@ -180,59 +183,11 @@ python python/pipeline.py --resume               # Resume after failure (skip co
 
 ## Key Concepts
 
-### WeatherNext Graph
-
-Google DeepMind's deterministic AI weather model, accessible via BigQuery Analytics Hub. Produces 10-day forecasts at 6-hourly resolution with global coverage. The table is partitioned by `init_time` and clustered by `geography`. Key fields used: 10m wind (u, v), 925 hPa wind, temperature (700/850 hPa), 6-hour precipitation, and derived features (wind shear, updraft proxy, hail flag).
-
-### EAGLE-I
-
-The US Department of Energy's power outage tracker. Reports county-level outage counts at 15-minute intervals. We aggregate to 6-hour blocks aligned with WeatherNext's temporal resolution and compute `outage_ratio = customers_out / total_customers`.
-
-### 6-Hour Alignment and QC
-
-WeatherNext forecasts at 6-hour temporal resolution. We align EAGLE-I data to matching 6-hour blocks (00-06Z, 06-12Z, etc.) and apply quality control: blocks with fewer than `MIN_SAMPLES_PER_BLOCK` readings (expect ~24 at 15-min cadence) are flagged as low-quality.
-
-### Multi-Ingredient Features
-
-Beyond basic 10m wind, we extract multiple weather ingredients that correlate with outage risk:
-
-- **10m wind speed** (`ws10`): direct tree/infrastructure damage
-- **925 hPa wind speed** (`ws925`): low-level jet indicator
-- **0-6 km wind shear** (`shear`): severe storm potential
-- **Updraft proxy** (`updraft700`): convective activity
-- **Hail flag**: `t700 <= 0C AND precip >= 2mm` (freezing + moisture)
-
-### Per-County Thresholds
-
-Instead of fixed thresholds, we compute data-driven percentiles per county:
-
-- **p90** for wind metrics (10m, 925 hPa, shear) -- flags the top 10% of weather
-- **p80** for updraft proxy (more permissive since updraft events are rarer)
-
-### Event Detection
-
-Gap-tolerant outage event detection groups consecutive elevated-outage readings into discrete events, tolerating gaps of up to `EVENT_GAP_MINUTES`. Each event has start/end times, duration, and peak outage ratio. Event coverage analysis then checks whether forecasts at each lead time detected the event.
-
-### Lead-Qualified Forecasts
-
-We evaluate forecasts at multiple lead times (24, 30, 36, 42, 48 hours) separately. Lead performance metrics (precision, recall, F1) show how forecast skill degrades with lead time. Event coverage flags show the earliest lead that detected each event.
-
-### ML Prediction (BQML / Vertex AI)
-
-The **threshold-based** approach (`sql/correlation/`) uses per-county percentile thresholds for transparent, explainable risk scoring. The **ML-based** approach (`sql/ml/`) trains a classifier on weather features to predict outage probability directly. BQML boosted trees stay entirely in SQL; Vertex AI AutoML (documented in [docs/vertex-ai-guide.md](docs/vertex-ai-guide.md)) provides maximum accuracy.
+Read more about the [Concepts here](docs/concepts.md)
 
 ## Expected Costs
 
 > **Always verify cost with `--dry-run` before running.** Step 01 (WeatherNext extraction) is the main cost driver. Paste the resolved SQL into BigQuery Console to check estimated bytes.
-
-
-| Scale                           | Estimated Cost | Notes                                                 |
-| ------------------------------- | -------------- | ----------------------------------------------------- |
-| 2-county demo (10 days)         | $1-5           | Depends on WeatherNext table size and cluster pruning |
-| State-level (1 month)           | $5-20          | ~50 counties                                          |
-| Regional (multi-state, 1 month) | $20-50         | ~200 counties                                         |
-| National (all US, 1 month)      | $50-200        | ~3,200 counties                                       |
-
 
 See [docs/cost-estimates.md](docs/cost-estimates.md) for detailed breakdown and optimization strategies.
 
@@ -268,4 +223,3 @@ Apache 2.0 -- see [LICENSE](LICENSE).
 - [Google DeepMind](https://deepmind.google/) for WeatherNext AI weather forecasts
 - [US Department of Energy](https://eagle-i.doe.gov/) for EAGLE-I outage data
 - [BigQuery GIS](https://cloud.google.com/bigquery/docs/gis-intro) for spatial analysis capabilities
-

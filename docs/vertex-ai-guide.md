@@ -191,5 +191,3 @@ FROM `your-project.your_dataset.vertex_predictions` p;
 | Inference        | ML.PREDICT in SQL                  | Batch prediction or endpoint           |
 | Retraining       | Re-run SQL                         | Re-run training job                    |
 | Best for         | Prototyping, SQL-first teams       | Production, maximum accuracy           |
-
-

@@ -8,11 +8,11 @@
 -- Downstream steps can filter on samples_in_block >= MIN_SAMPLES_PER_BLOCK.
 -- ============================================================================
 
-DECLARE gcp_project  STRING DEFAULT 'YOUR_GCP_PROJECT';
-DECLARE dataset_name STRING DEFAULT 'weathernext_demo';
-DECLARE county_fips  ARRAY<STRING> DEFAULT ['01051', '01101'];
-DECLARE start_ts     TIMESTAMP     DEFAULT TIMESTAMP('2024-05-06 00:00:00');
-DECLARE end_ts       TIMESTAMP     DEFAULT TIMESTAMP('2024-05-15 00:00:00');
+DECLARE gcp_project  STRING DEFAULT '${GCP_PROJECT}';
+DECLARE dataset_name STRING DEFAULT '${DATASET_NAME}';
+DECLARE county_fips  ARRAY<STRING> DEFAULT ${COUNTY_FIPS};
+DECLARE start_ts     TIMESTAMP     DEFAULT TIMESTAMP('${START_DATE} 00:00:00');
+DECLARE end_ts       TIMESTAMP     DEFAULT TIMESTAMP('${END_DATE} 00:00:00');
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE VIEW `%s.%s.view_eaglei_6h_qc` AS

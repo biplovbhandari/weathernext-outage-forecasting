@@ -27,7 +27,7 @@ import config
 SQL_BASE = os.path.join(os.path.dirname(__file__), '..', 'sql')
 
 # Phases run in this order when --phase all is used
-PHASE_ORDER = ['correlation', 'ml']
+PHASE_ORDER = ['correlation', 'ml', 'looker']
 
 # ML sub-phases map to (directory, file_prefix_glob)
 ML_SUB_PHASES = {
@@ -54,7 +54,6 @@ def build_replacement_map():
         'county_fips':     config.get_sql_fips_array(),
         'start_ts':        f"TIMESTAMP('{config.START_DATE} 00:00:00')",
         'end_ts':          f"TIMESTAMP('{config.END_DATE} 00:00:00')",
-        'init_hours':      config.get_sql_init_hours_array(),
         'init_timestamps': config.get_sql_init_timestamps(),
         'lead_hours_arr':  config.get_sql_lead_hours_array(),
         'spatial_buffer_m': config.SPATIAL_BUFFER_M,
@@ -246,10 +245,13 @@ def _detect_object_type(resolved_sql):
     return None
 
 
-def object_exists(client, full_name):
-    """Check if a BigQuery table or view exists."""
+def object_exists(client, full_name, obj_type=None):
+    """Check if a BigQuery table, view, or model exists."""
     try:
-        client.get_table(full_name)
+        if obj_type == 'MODEL':
+            client.get_model(full_name)
+        else:
+            client.get_table(full_name)
         return True
     except Exception:
         return False
@@ -266,7 +268,8 @@ def execute_step(client, phase, filename, sql, dry_run, verbose, resume=False):
 
     if resume and client:
         target = get_target_object(resolved_sql)
-        if target and object_exists(client, target):
+        obj_type = _detect_object_type(resolved_sql)
+        if target and object_exists(client, target, obj_type):
             print(f"  SKIP (already exists: {target})")
             return True
 
@@ -349,7 +352,8 @@ def parse_args():
             "  ml-data      ML step 1 only: prepare training data\n"
             "  ml-train     ML step 2 only: train model (may take minutes)\n"
             "  ml-eval      ML step 3 only: evaluate + predictions\n"
-            "  all          Run correlation then ml (default)\n"
+            "  looker       Dashboard views for Looker Studio / BI tools\n"
+            "  all          Run correlation, ml, then looker (default)\n"
             "\n"
             "Examples:\n"
             "  python pipeline.py                        # Run all phases\n"
@@ -364,7 +368,7 @@ def parse_args():
     parser.add_argument('--dry-run', action='store_true',
         help='Print resolved plain SQL without executing (pasteable into BigQuery Console)')
     parser.add_argument('--phase',
-        choices=['correlation', 'ml', 'ml-data', 'ml-train', 'ml-eval', 'all'],
+        choices=['correlation', 'ml', 'ml-data', 'ml-train', 'ml-eval', 'looker', 'all'],
         default='all',
         help='Pipeline phase to run (default: all)')
     parser.add_argument('--verbose', '-v', action='store_true',

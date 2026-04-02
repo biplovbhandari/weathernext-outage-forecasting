@@ -10,13 +10,13 @@
 -- by event_coverage downstream.
 -- ============================================================================
 
-DECLARE gcp_project   STRING  DEFAULT 'YOUR_GCP_PROJECT';
-DECLARE dataset_name  STRING  DEFAULT 'weathernext_demo';
-DECLARE county_fips   ARRAY<STRING> DEFAULT ['01051', '01101'];
-DECLARE start_ts      TIMESTAMP DEFAULT TIMESTAMP('2024-05-06 00:00:00');
-DECLARE end_ts        TIMESTAMP DEFAULT TIMESTAMP('2024-05-15 00:00:00');
-DECLARE event_out_thr FLOAT64 DEFAULT 0.005;
-DECLARE event_gap_min INT64   DEFAULT 60;
+DECLARE gcp_project   STRING  DEFAULT '${GCP_PROJECT}';
+DECLARE dataset_name  STRING  DEFAULT '${DATASET_NAME}';
+DECLARE county_fips   ARRAY<STRING> DEFAULT ${COUNTY_FIPS};
+DECLARE start_ts      TIMESTAMP DEFAULT TIMESTAMP('${START_DATE} 00:00:00');
+DECLARE end_ts        TIMESTAMP DEFAULT TIMESTAMP('${END_DATE} 00:00:00');
+DECLARE event_out_thr FLOAT64 DEFAULT ${EVENT_OUTAGE_THRESHOLD};
+DECLARE event_gap_min INT64   DEFAULT ${EVENT_GAP_MINUTES};
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE TABLE `%s.%s.events_restoration` AS

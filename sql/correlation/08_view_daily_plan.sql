@@ -11,15 +11,15 @@
 -- Includes reason_codes explaining why each tier was assigned.
 -- ============================================================================
 
-DECLARE gcp_project  STRING DEFAULT 'YOUR_GCP_PROJECT';
-DECLARE dataset_name STRING DEFAULT 'weathernext_demo';
-DECLARE start_ts     TIMESTAMP DEFAULT TIMESTAMP('2024-05-06 00:00:00');
-DECLARE end_ts       TIMESTAMP DEFAULT TIMESTAMP('2024-05-15 00:00:00');
-DECLARE lead_hours_arr  ARRAY<INT64> DEFAULT [24, 30, 36, 42, 48];
-DECLARE hail_temp_thr   FLOAT64      DEFAULT 0.0;
-DECLARE hail_precip_thr FLOAT64      DEFAULT 2.0;
-DECLARE wind_consist_min INT64       DEFAULT 2;
-DECLARE hail_consist_min INT64       DEFAULT 1;
+DECLARE gcp_project  STRING DEFAULT '${GCP_PROJECT}';
+DECLARE dataset_name STRING DEFAULT '${DATASET_NAME}';
+DECLARE start_ts     TIMESTAMP DEFAULT TIMESTAMP('${START_DATE} 00:00:00');
+DECLARE end_ts       TIMESTAMP DEFAULT TIMESTAMP('${END_DATE} 00:00:00');
+DECLARE lead_hours_arr  ARRAY<INT64> DEFAULT ${LEAD_HOURS};
+DECLARE hail_temp_thr   FLOAT64      DEFAULT ${HAIL_TEMP_THRESHOLD};
+DECLARE hail_precip_thr FLOAT64      DEFAULT ${HAIL_PRECIP_THRESHOLD};
+DECLARE wind_consist_min INT64       DEFAULT ${WIND_CONSISTENCY_MIN};
+DECLARE hail_consist_min INT64       DEFAULT ${HAIL_CONSISTENCY_MIN};
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE VIEW `%s.%s.view_daily_plan` AS

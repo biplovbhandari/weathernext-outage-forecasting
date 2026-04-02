@@ -7,10 +7,10 @@
 -- QC: only uses 6h blocks with sufficient EAGLE-I samples.
 -- ============================================================================
 
-DECLARE gcp_project  STRING DEFAULT 'YOUR_GCP_PROJECT';
-DECLARE dataset_name STRING DEFAULT 'weathernext_demo';
-DECLARE min_samples  INT64  DEFAULT 8;
-DECLARE lead_hours_arr ARRAY<INT64> DEFAULT [24, 30, 36, 42, 48];
+DECLARE gcp_project  STRING DEFAULT '${GCP_PROJECT}';
+DECLARE dataset_name STRING DEFAULT '${DATASET_NAME}';
+DECLARE min_samples  INT64  DEFAULT ${MIN_SAMPLES_PER_BLOCK};
+DECLARE lead_hours_arr ARRAY<INT64> DEFAULT ${LEAD_HOURS};
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE TABLE `%s.%s.correlations` AS

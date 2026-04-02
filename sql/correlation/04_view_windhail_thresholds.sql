@@ -2,18 +2,16 @@
 -- County-relative wind/hail thresholds — p90/p80 (Parameterized)
 -- ============================================================================
 -- Computes data-driven thresholds per county from the weather extraction table.
--- Replaces manual threshold tuning (WIND_THRESHOLD_LOW/HIGH etc.) with
--- statistical percentiles:
 --   p90 for wind metrics (10m, 925 hPa, shear)
 --   p80 for updraft proxy (more permissive since updraft is rarer)
 --
 -- These thresholds are used by event_coverage, daily_plan, and lead_performance.
 -- ============================================================================
 
-DECLARE gcp_project  STRING DEFAULT 'YOUR_GCP_PROJECT';
-DECLARE dataset_name STRING DEFAULT 'weathernext_demo';
-DECLARE start_ts     TIMESTAMP DEFAULT TIMESTAMP('2024-05-06 00:00:00');
-DECLARE end_ts       TIMESTAMP DEFAULT TIMESTAMP('2024-05-15 00:00:00');
+DECLARE gcp_project  STRING DEFAULT '${GCP_PROJECT}';
+DECLARE dataset_name STRING DEFAULT '${DATASET_NAME}';
+DECLARE start_ts     TIMESTAMP DEFAULT TIMESTAMP('${START_DATE} 00:00:00');
+DECLARE end_ts       TIMESTAMP DEFAULT TIMESTAMP('${END_DATE} 00:00:00');
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE VIEW `%s.%s.view_windhail_thresholds` AS

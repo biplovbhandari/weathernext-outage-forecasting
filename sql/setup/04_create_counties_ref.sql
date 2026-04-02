@@ -1,8 +1,8 @@
 -- ============================================================================
 -- Step 3: Create counties reference table (Parameterized)
 -- ============================================================================
-DECLARE gcp_project  STRING DEFAULT 'YOUR_GCP_PROJECT';
-DECLARE dataset_name STRING DEFAULT 'weathernext_demo';
+DECLARE gcp_project  STRING DEFAULT '${GCP_PROJECT}';
+DECLARE dataset_name STRING DEFAULT '${DATASET_NAME}';
 
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE TABLE `%s.%s.counties_ref` AS
