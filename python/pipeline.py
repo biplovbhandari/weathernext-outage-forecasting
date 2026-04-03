@@ -452,7 +452,7 @@ def main():
     args = parse_args()
     config.validate_config()
 
-    # Determine which phases to run (expand 'all', deduplicate, preserve order)
+    # Determine which phases to run (expand 'all', deduplicate, sort by canonical order)
     phases = []
     for p in args.phase:
         if p == 'all':
@@ -460,6 +460,11 @@ def main():
         else:
             phases.append(p)
     phase_list = list(dict.fromkeys(phases))
+
+    def _phase_sort_key(p):
+        base = p.split('-')[0]
+        return PHASE_ORDER.index(base) if base in PHASE_ORDER else len(PHASE_ORDER)
+    phase_list.sort(key=_phase_sort_key)
 
     # Parse configured ML models
     ml_models = [m.strip() for m in config.ML_MODELS.split(',') if m.strip()]
