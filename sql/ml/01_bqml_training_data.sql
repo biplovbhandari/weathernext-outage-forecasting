@@ -16,11 +16,11 @@ DECLARE min_samples       INT64   DEFAULT 8;
 EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE TABLE `%s.%s.bqml_training_data` AS
   SELECT
-    -- ─── Keys ────────────────────────────────────
+    -- Keys
     v.county_fips,
     v.valid_ts,
 
-    -- ─── Weather features ───────────────────────
+    -- Weather features
     v.ws10_max_mps,
     v.ws925_max_mps,
     v.shear_0_6km_max_mps,
@@ -44,13 +44,13 @@ EXECUTE IMMEDIATE FORMAT("""
     -- Raw outage ratio (for regression alternative)
     v.outage_ratio_6h_max,
 
-    -- ─── Label (binary classification) ───────────
+    -- Label (binary classification)
     CASE
       WHEN v.outage_ratio_6h_max >= @outage_threshold THEN 1
       ELSE 0
     END AS outage_event,
 
-    -- ─── Train/test split ────────────────────────
+    -- Train/test split
     -- 80/20 split: date-based to avoid temporal leakage
     CASE
       WHEN MOD(ABS(FARM_FINGERPRINT(

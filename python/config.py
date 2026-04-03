@@ -35,11 +35,20 @@ WIND_CONSISTENCY_MIN = os.getenv("WIND_CONSISTENCY_MIN", "2")
 HAIL_CONSISTENCY_MIN = os.getenv("HAIL_CONSISTENCY_MIN", "1")
 
 # --- ML Phase ---
+ML_MODELS = os.getenv("ML_MODELS", "regressor,logistic")
 ML_MAX_ITERATIONS = os.getenv("ML_MAX_ITERATIONS", "50")
 ML_LEARN_RATE = os.getenv("ML_LEARN_RATE", "0.1")
 ML_MIN_TREE_CHILD_WEIGHT = os.getenv("ML_MIN_TREE_CHILD_WEIGHT", "5")
 ML_SUBSAMPLE = os.getenv("ML_SUBSAMPLE", "0.8")
 ML_BUDGET_HOURS = os.getenv("ML_BUDGET_HOURS", "1.0")
+
+# ML model registry: maps model key to category, train file, and eval template
+ML_MODEL_REGISTRY = {
+    'regressor':  {'category': 'regressor',  'train': '02a_regressor_train.sql',  'eval': '03_regressor_eval.sql'},
+    'classifier': {'category': 'classifier', 'train': '02b_classifier_train.sql', 'eval': '03_classifier_eval.sql'},
+    'logistic':   {'category': 'classifier', 'train': '02c_logistic_train.sql',   'eval': '03_classifier_eval.sql'},
+    'automl':     {'category': 'classifier', 'train': '02d_automl_train.sql',     'eval': '03_classifier_eval.sql'},
+}
 
 
 def validate_config(is_setup=False):

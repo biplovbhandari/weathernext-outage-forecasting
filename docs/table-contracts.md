@@ -29,14 +29,23 @@ Every shared table and view in the pipeline, which phase produces it, and which 
 
 ### ML Phase Outputs
 
+Which models are trained is controlled by `ML_MODELS` in `config/.env`. Each model produces its own set of output tables with a `_{model_key}` suffix. The table below shows outputs for all 4 model types.
+
+**Shared:**
 | Object | Type | Produced By | Consumed By |
 |---|---|---|---|
-| `bqml_training_data` | TABLE | `ml/01` | `ml/02`, `ml/03` |
-| `outage_predictor_regressor` | MODEL | `ml/02` | `ml/03` |
-| `bqml_evaluation` | TABLE | `ml/03` | (end consumer) |
-| `bqml_feature_importance` | TABLE | `ml/03` | (end consumer) |
-| `bqml_predictions` | TABLE | `ml/03` | (end consumer) |
-| `bqml_threshold_sweep` | TABLE | `ml/03` | (end consumer) |
+| `bqml_training_data` | TABLE | `ml/01` | `ml/02a-d`, `ml/03` |
+
+**Per model** (created for each model in `ML_MODELS`):
+| Object pattern | Type | Produced By | Notes |
+|---|---|---|---|
+| `outage_predictor_{key}` | MODEL | `ml/02a-d` | One per model (regressor, classifier, logistic, automl) |
+| `bqml_evaluation_{key}` | TABLE | `ml/03` | Regression metrics (regressor) or classifier metrics (others) |
+| `bqml_feature_importance_{key}` | TABLE | `ml/03` | Feature importance via ML.GLOBAL_EXPLAIN |
+| `bqml_predictions_{key}` | TABLE | `ml/03` | Predicted ratio (regressor) or probability (classifiers) + tier |
+| `bqml_threshold_sweep_{key}` | TABLE | `ml/03` | Regressor only: precision/recall/F1 at cutoffs |
+| `bqml_confusion_matrix_{key}` | TABLE | `ml/03` | Classifiers only: TP/FP/FN/TN |
+| `bqml_roc_curve_{key}` | TABLE | `ml/03` | Classifiers only: ROC curve data |
 
 ### Looker Phase Outputs
 

@@ -33,12 +33,6 @@ SQL_BASE = os.path.join(os.path.dirname(__file__), '..', 'sql')
 # Phases run in this order when --phase all is used
 PHASE_ORDER = ['correlation', 'ml', 'looker']
 
-# ML sub-phases map to (directory, file_prefix_glob)
-ML_SUB_PHASES = {
-    'ml-data':  ('ml', '01_*'),
-    'ml-train': ('ml', '02_*'),
-    'ml-eval':  ('ml', '03_*'),
-}
 
 # Regex to match DECLARE lines by variable name
 DECLARE_RE = re.compile(
@@ -324,6 +318,7 @@ def execute_step(client, phase, filename, sql, dry_run, verbose, resume=False):
         elapsed = time.time() - start_time
         print(f"  FAILED ({elapsed:.1f}s)")
         print(f"  Error: {e}")
+        print(f"  Failed SQL:\n{resolved_sql}")
         return False
 
 
@@ -422,10 +417,10 @@ def parse_args():
         epilog=(
             "Phases:\n"
             "  correlation  Weather extraction, join, risk scoring, preboard\n"
-            "  ml           ML training data, model creation, evaluation (all 3)\n"
+            "  ml           ML training data, train + evaluate configured models\n"
             "  ml-data      ML step 1 only: prepare training data\n"
-            "  ml-train     ML step 2 only: train model (may take minutes)\n"
-            "  ml-eval      ML step 3 only: evaluate + predictions\n"
+            "  ml-train     Train configured models (set ML_MODELS in .env)\n"
+            "  ml-eval      Evaluate configured models (models must exist)\n"
             "  looker       Dashboard views for Looker Studio / BI tools\n"
             "  all          Run correlation, ml, then looker (default)\n"
             "\n"
@@ -456,14 +451,20 @@ def main():
     args = parse_args()
     config.validate_config()
 
-    # Determine which phases to run: list of (dir_name, file_filter) tuples
-    if args.phase in ML_SUB_PHASES:
-        dir_name, file_filter = ML_SUB_PHASES[args.phase]
-        phase_list = [(dir_name, file_filter)]
-    elif args.phase == 'all':
-        phase_list = [(p, None) for p in PHASE_ORDER]
+    # Determine which phases to run
+    if args.phase == 'all':
+        phase_list = list(PHASE_ORDER)
+    elif args.phase in ('ml-data', 'ml-train', 'ml-eval'):
+        phase_list = [args.phase]
     else:
-        phase_list = [(args.phase, None)]
+        phase_list = [args.phase]
+
+    # Parse configured ML models
+    ml_models = [m.strip() for m in config.ML_MODELS.split(',') if m.strip()]
+    for m in ml_models:
+        if m not in config.ML_MODEL_REGISTRY:
+            print(f"Error: Unknown ML model '{m}'. Valid: {', '.join(config.ML_MODEL_REGISTRY)}")
+            sys.exit(1)
 
     replacements = build_replacement_map()
 
@@ -475,6 +476,7 @@ def main():
     print(f"  Leads:    {config.LEAD_HOURS}")
     print(f"  Init hrs: {config.INIT_HOURS} (UTC)")
     print(f"  Phases:   {args.phase}")
+    print(f"  Models:   {', '.join(ml_models)}")
     if args.dry_run:
         print(f"  Mode:     DRY RUN")
     if args.resume:
@@ -492,32 +494,115 @@ def main():
 
     # Execute phases in order
     results = []
-    for phase, file_filter in phase_list:
+    for phase in phase_list:
         phase_start = time.time()
         phase_results = []
-        print(f"\n--- Phase: {phase}{f' ({file_filter})' if file_filter else ''} ---")
-        sql_files = discover_sql_files(phase, file_filter)
 
-        for filepath in sql_files:
-            filename = os.path.basename(filepath)
-
-            with open(filepath) as f:
-                sql = apply_variables(f.read(), replacements)
-
-            success = execute_step(client, phase, filename, sql,
-                                   args.dry_run, args.verbose,
-                                   resume=args.resume)
-            phase_results.append((phase, filename, success))
-            results.append((phase, filename, success))
-
+        if phase in ('ml', 'ml-data', 'ml-train', 'ml-eval'):
+            # ML phase: config-driven model selection
+            success = _run_ml_phase(
+                client, phase, ml_models, replacements,
+                args.dry_run, args.verbose, args.resume,
+                phase_results, results
+            )
             if not success:
                 write_run_metadata(client, phase, phase_start, phase_results)
                 print_summary(results)
                 return
+        else:
+            # Standard phase: discover and run all SQL files
+            print(f"\n--- Phase: {phase} ---")
+            sql_files = discover_sql_files(phase)
+
+            for filepath in sql_files:
+                filename = os.path.basename(filepath)
+
+                with open(filepath) as f:
+                    sql = apply_variables(f.read(), replacements)
+
+                success = execute_step(client, phase, filename, sql,
+                                       args.dry_run, args.verbose,
+                                       resume=args.resume)
+                phase_results.append((phase, filename, success))
+                results.append((phase, filename, success))
+
+                if not success:
+                    write_run_metadata(client, phase, phase_start, phase_results)
+                    print_summary(results)
+                    return
 
         write_run_metadata(client, phase, phase_start, phase_results)
 
     print_summary(results)
+
+
+def _run_ml_phase(client, phase, ml_models, replacements, dry_run, verbose, resume,
+                  phase_results, results):
+    """Execute ML phase with config-driven model selection.
+
+    Returns True on success, False on failure.
+    """
+    ml_dir = os.path.join(SQL_BASE, 'ml')
+    run_data = phase in ('ml', 'ml-data')
+    run_train = phase in ('ml', 'ml-train')
+    run_eval = phase in ('ml', 'ml-eval')
+
+    print(f"\n--- Phase: {phase} (models: {', '.join(ml_models)}) ---")
+
+    # Step 1: Training data (shared)
+    if run_data:
+        data_files = sorted(glob.glob(os.path.join(ml_dir, '01_*.sql')))
+        for filepath in data_files:
+            filename = os.path.basename(filepath)
+            with open(filepath) as f:
+                sql = apply_variables(f.read(), replacements)
+            success = execute_step(client, 'ml', filename, sql,
+                                   dry_run, verbose, resume=resume)
+            phase_results.append(('ml', filename, success))
+            results.append(('ml', filename, success))
+            if not success:
+                return False
+
+    # Step 2: Train each configured model
+    if run_train:
+        for model_key in ml_models:
+            info = config.ML_MODEL_REGISTRY[model_key]
+            filepath = os.path.join(ml_dir, info['train'])
+            with open(filepath) as f:
+                sql = apply_variables(f.read(), replacements)
+            success = execute_step(client, 'ml', info['train'], sql,
+                                   dry_run, verbose, resume=resume)
+            phase_results.append(('ml', info['train'], success))
+            results.append(('ml', info['train'], success))
+            if not success:
+                return False
+
+    # Step 3: Evaluate each configured model
+    if run_eval:
+        eval_run_id = f"ml-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+        for model_key in ml_models:
+            info = config.ML_MODEL_REGISTRY[model_key]
+            filepath = os.path.join(ml_dir, info['eval'])
+
+            # Inject model-specific DECLARE overrides
+            model_replacements = dict(replacements)
+            model_replacements['model_name'] = f"'outage_predictor_{model_key}'"
+            model_replacements['model_suffix'] = f"'{model_key}'"
+            model_replacements['model_type'] = f"'{model_key}'"
+            model_replacements['eval_run_id'] = f"'{eval_run_id}'"
+
+            with open(filepath) as f:
+                sql = apply_variables(f.read(), model_replacements)
+
+            eval_label = f"{info['eval']} [{model_key}]"
+            success = execute_step(client, 'ml', eval_label, sql,
+                                   dry_run, verbose, resume=resume)
+            phase_results.append(('ml', eval_label, success))
+            results.append(('ml', eval_label, success))
+            if not success:
+                return False
+
+    return True
 
 
 if __name__ == "__main__":

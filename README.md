@@ -123,7 +123,7 @@ python python/pipeline.py --phase looker
 | --------------- | ------------------ | ----- | ---------------------------------------------------------------------------- |
 | **setup**       | `sql/setup/`       | 5     | Dataset creation, EAGLE-I load, county reference, run metadata (run by `setup.py`) |
 | **correlation** | `sql/correlation/` | 10    | Weather extraction, 6h QC, events, thresholds, risk scoring, lead evaluation |
-| **ml**          | `sql/ml/`          | 3     | BQML training data, regressor model training, evaluation & threshold sweep   |
+| **ml**          | `sql/ml/`          | 7     | Training data, 4 model types (regressor, classifier, logistic, automl), eval |
 | **looker**      | `sql/looker/`      | 1     | Dashboard views for Looker Studio / any BI tool                              |
 
 
@@ -146,14 +146,19 @@ python python/pipeline.py --phase looker
 
 ### ML Steps Detail
 
+Which models run is controlled by `ML_MODELS` in `config/.env` (default: regressor,logistic).
 
 | Step | File                        | Type  | Creates                    | Purpose                                                      |
 | ---- | --------------------------- | ----- | -------------------------- | ------------------------------------------------------------ |
 | 01   | `01_bqml_training_data.sql` | TABLE | `bqml_training_data`       | Build features + labels from 6h master view                  |
-| 02   | `02_bqml_create_model.sql`  | MODEL | `outage_predictor_regressor` | Train boosted tree regressor (predicts outage ratio 0.0–1.0) |
-| 03   | `03_bqml_evaluate.sql`      | TABLE | `bqml_evaluation`, `bqml_feature_importance`, `bqml_predictions`, `bqml_threshold_sweep` | Evaluate model, feature importance, predictions, precision/recall at multiple thresholds |
+| 02a  | `02a_regressor_train.sql`   | MODEL | `outage_predictor_regressor` | Boosted tree regressor (predicts outage ratio 0.0–1.0)     |
+| 02b  | `02b_classifier_train.sql`  | MODEL | `outage_predictor_classifier` | Boosted tree classifier (binary outage yes/no + probability) |
+| 02c  | `02c_logistic_train.sql`    | MODEL | `outage_predictor_logistic` | Logistic regression (fast baseline, interpretable)          |
+| 02d  | `02d_automl_train.sql`      | MODEL | `outage_predictor_automl`  | AutoML classifier (highest performance, higher cost)         |
+| 03   | `03_regressor_eval.sql`     | TABLE | `bqml_evaluation_regressor`, `bqml_predictions_regressor`, ... | Regressor eval: MAE/R2, predictions, threshold sweep |
+| 03   | `03_classifier_eval.sql`    | TABLE | `bqml_evaluation_{model}`, `bqml_predictions_{model}`, ... | Classifier eval: precision/recall/F1, confusion matrix, ROC curve (reused per classifier) |
 
-> **Note:** Model training (step 02) may take several minutes. Use `--phase ml-train` to run it independently, or paste into BQ Console for progress visibility.
+> **Note:** Model training may take several minutes per model. Use `--phase ml-train` to train only, or `--phase ml-eval` to evaluate without retraining. Set `ML_MODELS=regressor,logistic` in `.env` to train a subset.
 
 
 ### CLI Options
@@ -162,8 +167,8 @@ python python/pipeline.py --phase looker
 python python/pipeline.py --phase correlation    # Correlation only
 python python/pipeline.py --phase ml             # All ML steps
 python python/pipeline.py --phase ml-data        # ML step 1 only: prepare training data
-python python/pipeline.py --phase ml-train       # ML step 2 only: train model (may take minutes)
-python python/pipeline.py --phase ml-eval        # ML step 3 only: evaluate + predictions
+python python/pipeline.py --phase ml-train       # Train configured models (set ML_MODELS in .env)
+python python/pipeline.py --phase ml-eval        # Evaluate configured models (models must exist)
 python python/pipeline.py --phase looker         # Dashboard views for BI tools
 python python/pipeline.py --phase all            # All (correlation + ml + looker)
 python python/pipeline.py --dry-run              # Print resolved SQL (paste into BQ Console for cost check)
