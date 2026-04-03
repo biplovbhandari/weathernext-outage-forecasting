@@ -42,6 +42,19 @@ DECLARE_RE = re.compile(
     re.MULTILINE
 )
 
+# Regex to match EXECUTE IMMEDIATE FORMAT blocks (with optional INTO and USING)
+_FORMAT_BLOCK_RE = re.compile(
+    r'EXECUTE\s+IMMEDIATE\s+FORMAT\s*\(\s*"""'
+    r'(.*?)'                                     # group 1: template body
+    r'"""\s*,\s*'
+    r'(.*?)'                                     # group 2: format args
+    r'\)\s*'
+    r'(?:INTO\s+(\w+)\s*)?'                      # group 3: optional INTO var_name
+    r'(?:USING\s+(.*?)\s*)?'                     # group 4: optional USING clause
+    r';',
+    re.DOTALL
+)
+
 
 def build_replacement_map():
     """Build variable_name -> replacement_value mapping from config."""
@@ -149,20 +162,6 @@ def _flatten_unnest(sql):
     not on IN UNNEST(array).
     """
     return re.sub(r'\bIN\s+UNNEST\(\[([^\]]+)\]\)', r'IN (\1)', sql)
-
-
-# Regex to match EXECUTE IMMEDIATE FORMAT blocks (with optional INTO and USING)
-_FORMAT_BLOCK_RE = re.compile(
-    r'EXECUTE\s+IMMEDIATE\s+FORMAT\s*\(\s*"""'
-    r'(.*?)'                                     # group 1: template body
-    r'"""\s*,\s*'
-    r'(.*?)'                                     # group 2: format args
-    r'\)\s*'
-    r'(?:INTO\s+(\w+)\s*)?'                      # group 3: optional INTO var_name
-    r'(?:USING\s+(.*?)\s*)?'                     # group 4: optional USING clause
-    r';',
-    re.DOTALL
-)
 
 
 def resolve_format(sql):
@@ -426,10 +425,11 @@ def parse_args():
             "\n"
             "Examples:\n"
             "  python pipeline.py                        # Run all phases\n"
+            "  python pipeline.py --phase correlation ml # Correlation + ML (skip looker)\n"
             "  python pipeline.py --phase correlation    # Correlation only\n"
             "  python pipeline.py --phase ml             # All ML steps\n"
-            "  python pipeline.py --phase ml-train       # Train model only\n"
-            "  python pipeline.py --phase ml-eval        # Evaluate only (model must exist)\n"
+            "  python pipeline.py --phase ml-train       # Train configured models\n"
+            "  python pipeline.py --phase ml-eval looker # Evaluate + dashboard views\n"
             "  python pipeline.py --dry-run              # Print resolved SQL (pasteable into BQ Console)\n"
             "  python pipeline.py --resume               # Skip completed steps\n"
         )
@@ -438,8 +438,9 @@ def parse_args():
         help='Print resolved plain SQL without executing (pasteable into BigQuery Console)')
     parser.add_argument('--phase',
         choices=['correlation', 'ml', 'ml-data', 'ml-train', 'ml-eval', 'looker', 'all'],
-        default='all',
-        help='Pipeline phase to run (default: all)')
+        nargs='+',
+        default=['all'],
+        help='Pipeline phase(s) to run (default: all). Multiple allowed: --phase correlation ml')
     parser.add_argument('--verbose', '-v', action='store_true',
         help='Print full SQL before execution')
     parser.add_argument('--resume', action='store_true',
@@ -451,13 +452,14 @@ def main():
     args = parse_args()
     config.validate_config()
 
-    # Determine which phases to run
-    if args.phase == 'all':
-        phase_list = list(PHASE_ORDER)
-    elif args.phase in ('ml-data', 'ml-train', 'ml-eval'):
-        phase_list = [args.phase]
-    else:
-        phase_list = [args.phase]
+    # Determine which phases to run (expand 'all', deduplicate, preserve order)
+    phases = []
+    for p in args.phase:
+        if p == 'all':
+            phases.extend(PHASE_ORDER)
+        else:
+            phases.append(p)
+    phase_list = list(dict.fromkeys(phases))
 
     # Parse configured ML models
     ml_models = [m.strip() for m in config.ML_MODELS.split(',') if m.strip()]
@@ -475,7 +477,7 @@ def main():
     print(f"  Window:   {config.START_DATE} to {config.END_DATE}")
     print(f"  Leads:    {config.LEAD_HOURS}")
     print(f"  Init hrs: {config.INIT_HOURS} (UTC)")
-    print(f"  Phases:   {args.phase}")
+    print(f"  Phases:   {', '.join(phase_list)}")
     print(f"  Models:   {', '.join(ml_models)}")
     if args.dry_run:
         print(f"  Mode:     DRY RUN")
