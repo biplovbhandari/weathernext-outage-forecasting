@@ -32,11 +32,13 @@ Every shared table and view in the pipeline, which phase produces it, and which 
 Which models are trained is controlled by `ML_MODELS` in `config/.env`. Each model produces its own set of output tables with a `_{model_key}` suffix. The table below shows outputs for all 4 model types.
 
 **Shared:**
+
 | Object | Type | Produced By | Consumed By |
 |---|---|---|---|
 | `bqml_training_data` | TABLE | `ml/01` | `ml/02a-d`, `ml/03` |
 
 **Per model** (created for each model in `ML_MODELS`):
+
 | Object pattern | Type | Produced By | Notes |
 |---|---|---|---|
 | `outage_predictor_{key}` | MODEL | `ml/02a-d` | One per model (regressor, classifier, logistic, automl) |
