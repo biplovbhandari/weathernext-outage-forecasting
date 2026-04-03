@@ -24,6 +24,7 @@ nav:
   - Home: index.md
   - Architecture: architecture.md
   - Concepts: concepts.md
+  - Table Contracts: table-contracts.md
   - Data Sources: data-sources.md
   - Cost Estimates: cost-estimates.md
   - Looker Studio: looker-studio-guide.md

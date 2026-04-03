@@ -180,6 +180,17 @@ The `--resume` flag is for **recovering from partial failures only**. It skips a
 
 **Do NOT use `--resume` after changing data-affecting config.** Stale tables would be kept.
 
+## Run Metadata
+
+Each pipeline phase writes a metadata record to the `pipeline_runs` table after completion. This provides traceability for "what config produced the current tables?" Records include:
+
+- Phase name, timing, and success/failure status
+- Config snapshot (project, counties, dates, thresholds)
+- Per-step status details
+- Git commit hash and hostname
+
+Query recent runs: `SELECT * FROM pipeline_runs ORDER BY started_at DESC LIMIT 10`
+
 ## Cost Architecture
 
 BigQuery charges per byte scanned. The largest cost driver is the WeatherNext forecast table. Cost controls:

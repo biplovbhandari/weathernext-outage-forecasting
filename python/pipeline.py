@@ -16,10 +16,14 @@ Usage:
 
 import argparse
 import glob
+import json
 import os
 import re
+import socket
+import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
 from google.cloud import bigquery
 import config
@@ -341,6 +345,76 @@ def print_summary(results):
         print(f"\n  All {len(results)} steps completed successfully.")
 
 
+def _get_git_commit():
+    """Get short git commit hash, or 'unknown'."""
+    try:
+        return subprocess.check_output(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+    except Exception:
+        return 'unknown'
+
+
+def write_run_metadata(client, phase, phase_start_time, phase_results):
+    """Write a run metadata record to BigQuery pipeline_runs table."""
+    if client is None:
+        return
+
+    run_id = f"{phase}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    completed_at = datetime.now(timezone.utc)
+    duration = time.time() - phase_start_time
+    failed_count = sum(1 for _, _, ok in phase_results if not ok)
+    status = 'SUCCESS' if failed_count == 0 else 'FAILED'
+
+    config_snapshot = {
+        'gcp_project': config.GCP_PROJECT,
+        'dataset': config.DATASET_NAME,
+        'counties': config.COUNTY_FIPS,
+        'start_date': config.START_DATE,
+        'end_date': config.END_DATE,
+        'lead_hours': config.LEAD_HOURS,
+        'init_hours': config.INIT_HOURS,
+        'outage_threshold': config.OUTAGE_THRESHOLD,
+    }
+    if phase in ('ml', 'ml-data', 'ml-train', 'ml-eval'):
+        config_snapshot.update({
+            'ml_max_iterations': config.ML_MAX_ITERATIONS,
+            'ml_learn_rate': config.ML_LEARN_RATE,
+            'ml_subsample': config.ML_SUBSAMPLE,
+        })
+
+    step_details = [
+        {'step': filename, 'status': 'OK' if ok else 'FAILED'}
+        for _, filename, ok in phase_results
+    ]
+
+    row = {
+        'run_id': run_id,
+        'phase': phase,
+        'started_at': datetime.fromtimestamp(phase_start_time, tz=timezone.utc).isoformat(),
+        'completed_at': completed_at.isoformat(),
+        'duration_seconds': round(duration, 1),
+        'status': status,
+        'steps_completed': len(phase_results) - failed_count,
+        'steps_failed': failed_count,
+        'config': json.dumps(config_snapshot),
+        'step_details': json.dumps(step_details),
+        'git_commit': _get_git_commit(),
+        'hostname': socket.gethostname(),
+    }
+
+    table_ref = f"{config.GCP_PROJECT}.{config.DATASET_NAME}.pipeline_runs"
+    try:
+        errors = client.insert_rows_json(table_ref, [row])
+        if errors:
+            print(f"  Warning: failed to write run metadata: {errors}")
+        else:
+            print(f"  Run metadata saved: {run_id}")
+    except Exception as e:
+        print(f"  Warning: could not write run metadata: {e}")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='WeatherNext Utility Forecasting — BigQuery SQL Pipeline',
@@ -419,6 +493,8 @@ def main():
     # Execute phases in order
     results = []
     for phase, file_filter in phase_list:
+        phase_start = time.time()
+        phase_results = []
         print(f"\n--- Phase: {phase}{f' ({file_filter})' if file_filter else ''} ---")
         sql_files = discover_sql_files(phase, file_filter)
 
@@ -431,11 +507,15 @@ def main():
             success = execute_step(client, phase, filename, sql,
                                    args.dry_run, args.verbose,
                                    resume=args.resume)
+            phase_results.append((phase, filename, success))
             results.append((phase, filename, success))
 
             if not success:
+                write_run_metadata(client, phase, phase_start, phase_results)
                 print_summary(results)
                 return
+
+        write_run_metadata(client, phase, phase_start, phase_results)
 
     print_summary(results)
 

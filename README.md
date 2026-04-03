@@ -4,7 +4,7 @@
 
 This project correlates [WeatherNext](https://deepmind.google/discover/blog/graphcast-ai-model-for-faster-and-more-accurate-global-weather-forecasting/) AI weather forecasts with [EAGLE-I](https://eagle-i.doe.gov/) power outage data on Google Cloud BigQuery to help electric utilities pre-position repair crews ahead of severe weather events.
 
-**[Full Documentation](https://biplovbhandari.github.io/weathernext-outage-forecasting/)** | [Architecture](docs/architecture.md) | [Concepts](docs/concepts.md) | [Cost Estimates](docs/cost-estimates.md)
+**[Full Documentation](https://biplovbhandari.github.io/weathernext-outage-forecasting/)** | [Architecture](docs/architecture.md) | [Concepts](docs/concepts.md) | [Table Contracts](docs/table-contracts.md) | [Cost Estimates](docs/cost-estimates.md)
 
 ---
 
@@ -111,6 +111,9 @@ python python/pipeline.py --phase correlation
 
 # 8. (Optional) Run ML pipeline
 python python/pipeline.py --phase ml
+
+# 9. (Optional) Create dashboard views for Looker Studio / BI tools
+python python/pipeline.py --phase looker
 ```
 
 ### Pipeline Phases
@@ -118,9 +121,10 @@ python python/pipeline.py --phase ml
 
 | Phase           | SQL Folder         | Steps | What It Does                                                                 |
 | --------------- | ------------------ | ----- | ---------------------------------------------------------------------------- |
-| **setup**       | `sql/setup/`       | 4     | Dataset creation, EAGLE-I load, county reference (run by `setup.py`)         |
+| **setup**       | `sql/setup/`       | 5     | Dataset creation, EAGLE-I load, county reference, run metadata (run by `setup.py`) |
 | **correlation** | `sql/correlation/` | 10    | Weather extraction, 6h QC, events, thresholds, risk scoring, lead evaluation |
 | **ml**          | `sql/ml/`          | 3     | BQML training data, regressor model training, evaluation & threshold sweep   |
+| **looker**      | `sql/looker/`      | 1     | Dashboard views for Looker Studio / any BI tool                              |
 
 
 ### Correlation Steps Detail
@@ -160,7 +164,8 @@ python python/pipeline.py --phase ml             # All ML steps
 python python/pipeline.py --phase ml-data        # ML step 1 only: prepare training data
 python python/pipeline.py --phase ml-train       # ML step 2 only: train model (may take minutes)
 python python/pipeline.py --phase ml-eval        # ML step 3 only: evaluate + predictions
-python python/pipeline.py --phase all            # Both (correlation + ml)
+python python/pipeline.py --phase looker         # Dashboard views for BI tools
+python python/pipeline.py --phase all            # All (correlation + ml + looker)
 python python/pipeline.py --dry-run              # Print resolved SQL (paste into BQ Console for cost check)
 python python/pipeline.py --resume               # Resume after failure (skip completed steps)
 ```
